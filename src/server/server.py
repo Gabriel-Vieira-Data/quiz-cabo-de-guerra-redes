@@ -1,7 +1,8 @@
 import socket
 from typing import Dict
 
-from src.common.protocol import TipoMensagem, criar_mensagem, decodificar_mensagem, codificar_mensagem
+from src.common.game_logic import resolverResultadoRodada
+from src.common.protocol import TipoMensagem, criar_mensagem, codificar_mensagem
 
 
 class ServidorQuiz:
@@ -15,6 +16,9 @@ class ServidorQuiz:
             "rodada": 1,
             "maximo_rodadas": 10,
         }
+
+    def registrar_jogador(self, identificador_jogador: str, socket_jogador: socket.socket):
+        self.jogadores_conectados[identificador_jogador] = socket_jogador
 
     def iniciar_servidor_tcp(self):
         self.socket_tcp = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -33,7 +37,7 @@ class ServidorQuiz:
         while len(self.jogadores_conectados) < 2:
             conexao, endereco = self.socket_tcp.accept()
             identificador_jogador = f"player-{len(self.jogadores_conectados) + 1}"
-            self.jogadores_conectados[identificador_jogador] = conexao
+            self.registrar_jogador(identificador_jogador, conexao)
             print(f"Cliente conectado: {identificador_jogador} em {endereco}")
 
     def enviar_mensagem(self, socket_cliente: socket.socket, tipo_mensagem: TipoMensagem, dados: dict):
@@ -50,6 +54,32 @@ class ServidorQuiz:
     def atualizar_barra(self, direcao: int):
         self.estado_jogo["posicao_barra"] += direcao
         self.transmitir(TipoMensagem.ATUALIZAR_BARRA, {"posicao": self.estado_jogo["posicao_barra"]})
+
+    def processar_resposta(
+        self,
+        jogador_a: str,
+        jogador_b: str,
+        resposta_a: str,
+        resposta_b: str,
+        resposta_correta: str = "TCP",
+    ):
+        resultado = resolverResultadoRodada(
+            jogador_a=jogador_a,
+            jogador_b=jogador_b,
+            resposta_a=resposta_a,
+            resposta_b=resposta_b,
+            resposta_correta=resposta_correta,
+        )
+
+        if resultado["vencedor"] == "empate":
+            return resultado
+
+        if resultado["vencedor"] == jogador_a:
+            self.estado_jogo["posicao_barra"] += resultado["delta_barra"] * resultado["direcao_barra"]
+        elif resultado["vencedor"] == jogador_b:
+            self.estado_jogo["posicao_barra"] += resultado["delta_barra"] * resultado["direcao_barra"]
+
+        return resultado
 
     def finalizar_rodada(self, vencedor: str | None = None):
         self.transmitir(TipoMensagem.FIM_RODADA, {"vencedor": vencedor, "rodada": self.estado_jogo["rodada"]})
