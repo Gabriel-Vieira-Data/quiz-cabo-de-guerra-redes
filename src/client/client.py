@@ -13,7 +13,7 @@ class ClienteQuiz:
 
     def conectar(self):
         self.socket_tcp.connect((self.host, self.porta_tcp))
-        self.socket_udp.bind((self.host, self.porta_udp))
+        self.socket_udp.bind(("0.0.0.0", 0))
 
     def enviar_entrada(self, id_jogador: str, apelido: str):
         mensagem = criar_mensagem(TipoMensagem.ENTRAR, {"id_jogador": id_jogador, "apelido": apelido})

@@ -1,13 +1,15 @@
 import json
 import socket
+import time
 from typing import Dict
 
+from src.common.banco_perguntas import BancoPerguntas
 from src.common.game_logic import resolverResultadoRodada
 from src.common.protocol import TipoMensagem, criar_mensagem, codificar_mensagem
 
 
 class ServidorQuiz:
-    def __init__(self, host: str = "127.0.0.1", porta_tcp: int = 5000, porta_udp: int = 5001):
+    def __init__(self, host: str = "0.0.0.0", porta_tcp: int = 5000, porta_udp: int = 5001):
         self.host = host
         self.porta_tcp = porta_tcp
         self.porta_udp = porta_udp
@@ -16,6 +18,11 @@ class ServidorQuiz:
         self.salas: dict[str, dict] = {}
         self.partidas_ativas: dict[str, dict] = {}
         self.respostas_por_sala: dict[str, dict[str, dict[str, str]]] = {}
+        self.tempo_resposta_por_sala: dict[str, dict[str, float]] = {}
+        self.rodadas_por_sala: dict[str, dict] = {}
+        self.banco_perguntas = BancoPerguntas()
+        self.perguntas_rodada: dict[str, dict] = {}
+        self.tempo_limite_rodada = 30
         self.estado_jogo = {
             "posicao_barra": 0,
             "rodada": 1,
@@ -35,7 +42,75 @@ class ServidorQuiz:
         sala = self.criar_sala_para_espera()
         if sala is not None:
             self.respostas_por_sala.setdefault(sala["codigo"], {})
+            self.iniciar_partida_em_sala(sala["codigo"])
+            pergunta = self.selecionar_pergunta_para_sala(sala["codigo"])
+            self.enviar_pergunta_para_sala(
+                sala["codigo"],
+                {
+                    "rodada_id": 1,
+                    "pergunta": pergunta["pergunta"],
+                    "opcoes": pergunta["opcoes"],
+                    "resposta_correta": pergunta["resposta_correta"],
+                    "tempo_limite": self.tempo_limite_rodada,
+                },
+            )
         return sala
+
+    def processar_mensagem(self, mensagem: dict, socket_remetente: socket.socket | None = None):
+        if not mensagem:
+            return None
+
+        tipo_mensagem = str(mensagem.get("tipo", "")).upper()
+
+        if tipo_mensagem == TipoMensagem.ENTRAR.value:
+            id_jogador = mensagem.get("id_jogador")
+            apelido = mensagem.get("apelido")
+            if not id_jogador:
+                return None
+
+            if socket_remetente is not None:
+                self.jogadores_conectados[id_jogador] = socket_remetente
+                if id_jogador not in self.estado_jogo["pontuacao"]:
+                    self.estado_jogo["pontuacao"][id_jogador] = 0
+
+            self.adicionar_jogador_espera(id_jogador)
+            sala = self.criar_sala_para_espera()
+            if sala is not None:
+                self.respostas_por_sala.setdefault(sala["codigo"], {})
+                self.iniciar_partida_em_sala(sala["codigo"])
+                pergunta = self.selecionar_pergunta_para_sala(sala["codigo"])
+                self.enviar_pergunta_para_sala(
+                    sala["codigo"],
+                    {
+                        "rodada_id": 1,
+                        "pergunta": pergunta["pergunta"],
+                        "opcoes": pergunta["opcoes"],
+                        "resposta_correta": pergunta["resposta_correta"],
+                        "tempo_limite": self.tempo_limite_rodada,
+                    },
+                )
+            return {
+                "tipo": TipoMensagem.ENTRAR.value,
+                "id_jogador": id_jogador,
+                "apelido": apelido,
+                "sala": sala,
+            }
+
+        if tipo_mensagem == TipoMensagem.RESPOSTA.value:
+            id_jogador = mensagem.get("id_jogador")
+            rodada_id = mensagem.get("rodada_id", 1)
+            resposta = mensagem.get("resposta", "")
+
+            if not id_jogador:
+                return None
+
+            codigo_sala = self._obter_codigo_sala_do_jogador(id_jogador)
+            if codigo_sala is None:
+                return None
+
+            return self.registrar_resposta_jogador(codigo_sala, rodada_id, id_jogador, resposta)
+
+        return mensagem
 
     def adicionar_jogador_espera(self, id_jogador: str):
         if id_jogador not in self.fila_espera:
@@ -101,7 +176,7 @@ class ServidorQuiz:
         print(f"Servidor UDP ouvindo em {self.host}:{self.porta_udp}")
 
     def aceitar_conexoes(self):
-        while self._servidor_ativo and len(self.jogadores_conectados) < 2:
+        while self._servidor_ativo:
             try:
                 conexao, endereco = self.socket_tcp.accept()
             except socket.timeout:
@@ -109,13 +184,36 @@ class ServidorQuiz:
             except OSError:
                 break
 
-            identificador_jogador = f"player-{len(self.jogadores_conectados) + 1}"
-            self.registrar_jogador(identificador_jogador, conexao)
+            try:
+                dados = conexao.recv(4096)
+            except OSError:
+                continue
+
+            if not dados:
+                conexao.close()
+                continue
+
+            mensagem = json.loads(dados.decode("utf-8"))
+            tipo = str(mensagem.get("tipo", "")).upper()
+            identificador_jogador = mensagem.get("id_jogador")
+            if not identificador_jogador:
+                identificador_jogador = f"player-{len(self.jogadores_conectados) + 1}"
+
+            self.processar_mensagem(mensagem, conexao)
             print(f"Cliente conectado: {identificador_jogador} em {endereco}")
+
+            if tipo == TipoMensagem.ENTRAR.value:
+                self.jogadores_conectados[identificador_jogador] = conexao
 
     def enviar_mensagem(self, socket_cliente: socket.socket, tipo_mensagem: TipoMensagem, dados: dict):
         mensagem = criar_mensagem(tipo_mensagem, dados)
         socket_cliente.sendall(codificar_mensagem(mensagem))
+
+    def _obter_codigo_sala_do_jogador(self, id_jogador: str):
+        for codigo_sala, sala in self.salas.items():
+            if id_jogador in sala.get("jogadores", []):
+                return codigo_sala
+        return None
 
     def receber_mensagem(self, identificador_jogador: str):
         socket_jogador = self.jogadores_conectados[identificador_jogador]
@@ -127,6 +225,31 @@ class ServidorQuiz:
     def transmitir(self, tipo_mensagem: TipoMensagem, dados: dict):
         for cliente in self.jogadores_conectados.values():
             self.enviar_mensagem(cliente, tipo_mensagem, dados)
+
+    def selecionar_pergunta_para_sala(self, codigo_sala: str):
+        sala = self.salas.get(codigo_sala)
+        if not sala:
+            raise ValueError(f"Sala {codigo_sala} não existe.")
+
+        perguntas = self.banco_perguntas.obter_perguntas()
+        if not perguntas:
+            raise ValueError("Banco de perguntas vazio.")
+
+        pergunta = __import__("random").choice(perguntas)
+        self.perguntas_rodada[codigo_sala] = pergunta
+        self.tempo_resposta_por_sala.setdefault(codigo_sala, {})
+        self.respostas_por_sala.setdefault(codigo_sala, {})
+        self.tempo_resposta_por_sala[codigo_sala].clear()
+        self.respostas_por_sala[codigo_sala].clear()
+        self.rodadas_por_sala[codigo_sala] = {
+            "inicio": time.time(),
+            "respostas": {},
+            "vencedor": None,
+            "concluida": False,
+        }
+        self.tempo_rodada_por_sala = getattr(self, "tempo_rodada_por_sala", {})
+        self.tempo_rodada_por_sala[codigo_sala] = time.time()
+        return pergunta
 
     def enviar_pergunta_para_sala(self, codigo_sala: str, pergunta: dict):
         sala = self.salas.get(codigo_sala)
@@ -182,24 +305,42 @@ class ServidorQuiz:
         if not sala:
             raise ValueError(f"Sala {codigo_sala} não existe.")
 
-        respostas_da_rodada = self.respostas_por_sala.setdefault(codigo_sala, {}).setdefault(str(rodada_id), {})
-        respostas_da_rodada[id_jogador] = resposta
-
-        jogadores = sala["jogadores"]
-        if len(respostas_da_rodada) < len(jogadores):
+        estado_rodada = self.rodadas_por_sala.setdefault(
+            codigo_sala,
+            {"inicio": time.time(), "respostas": {}, "vencedor": None, "concluida": False},
+        )
+        if estado_rodada["concluida"]:
             return None
 
-        jogador_a, jogador_b = jogadores[:2]
-        resposta_a = respostas_da_rodada.get(jogador_a, "")
-        resposta_b = respostas_da_rodada.get(jogador_b, "")
-        resultado = self.processar_resposta(
-            jogador_a=jogador_a,
-            jogador_b=jogador_b,
-            resposta_a=resposta_a,
-            resposta_b=resposta_b,
-            resposta_correta="TCP",
-        )
-        self.respostas_por_sala[codigo_sala][str(rodada_id)] = {}
+        if id_jogador in estado_rodada["respostas"]:
+            return None
+
+        if time.time() - estado_rodada["inicio"] > self.tempo_limite_rodada:
+            estado_rodada["concluida"] = True
+            return None
+
+        resposta_normalizada = str(resposta).strip().upper()
+        pergunta = self.perguntas_rodada.get(codigo_sala, {})
+        resposta_correta = str(pergunta.get("resposta_correta", "")).strip().upper()
+
+        estado_rodada["respostas"][id_jogador] = {
+            "resposta": resposta_normalizada,
+            "tempo": time.time(),
+        }
+        self.tempo_resposta_por_sala.setdefault(codigo_sala, {}).setdefault(str(rodada_id), {})
+        self.tempo_resposta_por_sala[codigo_sala][str(rodada_id)][id_jogador] = time.time()
+
+        if resposta_normalizada != resposta_correta:
+            if len(estado_rodada["respostas"]) >= len(sala["jogadores"]):
+                estado_rodada["concluida"] = True
+                return {"vencedor": "nenhum", "delta_barra": 0, "direcao_barra": 0}
+            return None
+
+        estado_rodada["concluida"] = True
+        estado_rodada["vencedor"] = id_jogador
+        self.estado_jogo["pontuacao"][id_jogador] = self.estado_jogo["pontuacao"].get(id_jogador, 0) + 1
+        resultado = {"vencedor": id_jogador, "delta_barra": 1, "direcao_barra": 1}
+        self.finalizar_rodada(vencedor=id_jogador)
         return resultado
 
     def processar_resposta(
@@ -274,5 +415,23 @@ class ServidorQuiz:
     def finalizar_jogo(self, vencedor: str):
         self.transmitir(TipoMensagem.FIM_JOGO, {"vencedor": vencedor})
 
+    def iniciar_loop_principal(self):
+        self.iniciar_servidor_tcp()
+        self.iniciar_servidor_udp()
+
+        thread_tcp = __import__("threading").Thread(target=self.aceitar_conexoes, daemon=True)
+        thread_tcp.start()
+        thread_udp = __import__("threading").Thread(target=self.escutar_ping_udp, daemon=True)
+        thread_udp.start()
+
+        print(f"Servidor pronto em {self.host}:{self.porta_tcp}")
+        while self._servidor_ativo:
+            time.sleep(0.2)
+
 
 QuizServer = ServidorQuiz
+
+
+if __name__ == "__main__":
+    servidor = ServidorQuiz()
+    servidor.iniciar_loop_principal()
