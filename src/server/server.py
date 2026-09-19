@@ -12,6 +12,9 @@ class ServidorQuiz:
         self.porta_tcp = porta_tcp
         self.porta_udp = porta_udp
         self.jogadores_conectados: Dict[str, socket.socket] = {}
+        self.fila_espera: list[str] = []
+        self.salas: dict[str, dict] = {}
+        self.partidas_ativas: dict[str, dict] = {}
         self.estado_jogo = {
             "posicao_barra": 0,
             "rodada": 1,
@@ -26,6 +29,52 @@ class ServidorQuiz:
         self.jogadores_conectados[identificador_jogador] = socket_jogador
         if identificador_jogador not in self.estado_jogo["pontuacao"]:
             self.estado_jogo["pontuacao"][identificador_jogador] = 0
+
+    def adicionar_jogador_espera(self, id_jogador: str):
+        if id_jogador not in self.fila_espera:
+            self.fila_espera.append(id_jogador)
+
+    def criar_sala(self, codigo_sala: str):
+        jogadores_da_sala = [jogador for jogador in self.jogadores_conectados if jogador in {"player-1", "player-2"}]
+        self.salas[codigo_sala] = {
+            "codigo": codigo_sala,
+            "jogadores": jogadores_da_sala,
+            "estado": "esperando",
+        }
+        return self.salas[codigo_sala]
+
+    def criar_sala_para_espera(self):
+        if len(self.fila_espera) < 2:
+            return None
+
+        jogadores = self.fila_espera[:2]
+        codigo_sala = f"sala-{len(self.salas) + 1}"
+        self.fila_espera = self.fila_espera[2:]
+        self.salas[codigo_sala] = {
+            "codigo": codigo_sala,
+            "jogadores": jogadores,
+            "estado": "esperando",
+        }
+        return self.salas[codigo_sala]
+
+    def iniciar_partida_em_sala(self, codigo_sala: str):
+        sala = self.salas.get(codigo_sala)
+        if not sala:
+            raise ValueError(f"Sala {codigo_sala} não existe.")
+
+        jogadores = sala["jogadores"]
+        if len(jogadores) < 2:
+            raise ValueError(f"Sala {codigo_sala} precisa de 2 jogadores para iniciar.")
+
+        partida = {
+            "codigo": codigo_sala,
+            "rodada": 1,
+            "estado": "em_andamento",
+            "jogadores": jogadores,
+        }
+        self.partidas_ativas[codigo_sala] = partida
+        sala["estado"] = "em_andamento"
+        return partida
 
     def iniciar_servidor_tcp(self):
         self._servidor_ativo = True
@@ -129,9 +178,15 @@ class ServidorQuiz:
         if resultado["vencedor"] == "empate":
             return resultado
 
-        if resultado["vencedor"] == jogador_a:
+        vencedor_rodada = resultado["vencedor"]
+        if vencedor_rodada in self.estado_jogo["pontuacao"]:
+            self.estado_jogo["pontuacao"][vencedor_rodada] += 1
+            if self.estado_jogo["pontuacao"][vencedor_rodada] >= 2:
+                self.estado_jogo["vencedor"] = vencedor_rodada
+
+        if vencedor_rodada == jogador_a:
             self.estado_jogo["posicao_barra"] += resultado["delta_barra"] * resultado["direcao_barra"]
-        elif resultado["vencedor"] == jogador_b:
+        elif vencedor_rodada == jogador_b:
             self.estado_jogo["posicao_barra"] += resultado["delta_barra"] * resultado["direcao_barra"]
 
         return resultado
