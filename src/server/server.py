@@ -15,6 +15,7 @@ class ServidorQuiz:
         self.fila_espera: list[str] = []
         self.salas: dict[str, dict] = {}
         self.partidas_ativas: dict[str, dict] = {}
+        self.respostas_por_sala: dict[str, dict[str, dict[str, str]]] = {}
         self.estado_jogo = {
             "posicao_barra": 0,
             "rodada": 1,
@@ -31,7 +32,10 @@ class ServidorQuiz:
             self.estado_jogo["pontuacao"][identificador_jogador] = 0
 
         self.adicionar_jogador_espera(identificador_jogador)
-        return self.criar_sala_para_espera()
+        sala = self.criar_sala_para_espera()
+        if sala is not None:
+            self.respostas_por_sala.setdefault(sala["codigo"], {})
+        return sala
 
     def adicionar_jogador_espera(self, id_jogador: str):
         if id_jogador not in self.fila_espera:
@@ -172,6 +176,31 @@ class ServidorQuiz:
             return True
 
         return False
+
+    def registrar_resposta_jogador(self, codigo_sala: str, rodada_id: int, id_jogador: str, resposta: str):
+        sala = self.salas.get(codigo_sala)
+        if not sala:
+            raise ValueError(f"Sala {codigo_sala} não existe.")
+
+        respostas_da_rodada = self.respostas_por_sala.setdefault(codigo_sala, {}).setdefault(str(rodada_id), {})
+        respostas_da_rodada[id_jogador] = resposta
+
+        jogadores = sala["jogadores"]
+        if len(respostas_da_rodada) < len(jogadores):
+            return None
+
+        jogador_a, jogador_b = jogadores[:2]
+        resposta_a = respostas_da_rodada.get(jogador_a, "")
+        resposta_b = respostas_da_rodada.get(jogador_b, "")
+        resultado = self.processar_resposta(
+            jogador_a=jogador_a,
+            jogador_b=jogador_b,
+            resposta_a=resposta_a,
+            resposta_b=resposta_b,
+            resposta_correta="TCP",
+        )
+        self.respostas_por_sala[codigo_sala][str(rodada_id)] = {}
+        return resultado
 
     def processar_resposta(
         self,

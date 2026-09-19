@@ -52,3 +52,18 @@ def test_servidor_envia_pergunta_para_todos_os_jogadores_da_sala():
     assert jogador_1.ultima_mensagem["tipo"] == "PERGUNTA"
     assert jogador_2.ultima_mensagem["tipo"] == "PERGUNTA"
     assert jogador_1.ultima_mensagem["pergunta"] == pergunta["pergunta"]
+
+
+def test_servidor_registra_respostas_por_sala_e_resolve_rodada_quando_os_dois_jogadores_responderam():
+    servidor = ServidorQuiz()
+    servidor.registrar_jogador("player-1", object())
+    sala = servidor.registrar_jogador("player-2", object())
+
+    assert sala is not None
+
+    resultado_1 = servidor.registrar_resposta_jogador("sala-1", 1, "player-1", "TCP")
+    assert resultado_1 is None
+
+    resultado_2 = servidor.registrar_resposta_jogador("sala-1", 1, "player-2", "UDP")
+    assert resultado_2["vencedor"] == "player-1"
+    assert servidor.estado_jogo["pontuacao"]["player-1"] == 1
