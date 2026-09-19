@@ -30,6 +30,9 @@ class ServidorQuiz:
         if identificador_jogador not in self.estado_jogo["pontuacao"]:
             self.estado_jogo["pontuacao"][identificador_jogador] = 0
 
+        self.adicionar_jogador_espera(identificador_jogador)
+        return self.criar_sala_para_espera()
+
     def adicionar_jogador_espera(self, id_jogador: str):
         if id_jogador not in self.fila_espera:
             self.fila_espera.append(id_jogador)
