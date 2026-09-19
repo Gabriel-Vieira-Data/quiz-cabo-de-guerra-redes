@@ -1,3 +1,4 @@
+import json
 import socket
 from typing import Dict
 
@@ -16,26 +17,38 @@ class ServidorQuiz:
             "rodada": 1,
             "maximo_rodadas": 10,
         }
+        self.ultimo_ping = None
+        self._servidor_ativo = False
 
     def registrar_jogador(self, identificador_jogador: str, socket_jogador: socket.socket):
         self.jogadores_conectados[identificador_jogador] = socket_jogador
 
     def iniciar_servidor_tcp(self):
+        self._servidor_ativo = True
         self.socket_tcp = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.socket_tcp.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.socket_tcp.bind((self.host, self.porta_tcp))
         self.socket_tcp.listen()
+        self.socket_tcp.settimeout(0.2)
         print(f"Servidor TCP ouvindo em {self.host}:{self.porta_tcp}")
 
     def iniciar_servidor_udp(self):
+        self._servidor_ativo = True
         self.socket_udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.socket_udp.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.socket_udp.bind((self.host, self.porta_udp))
+        self.socket_udp.settimeout(0.2)
         print(f"Servidor UDP ouvindo em {self.host}:{self.porta_udp}")
 
     def aceitar_conexoes(self):
-        while len(self.jogadores_conectados) < 2:
-            conexao, endereco = self.socket_tcp.accept()
+        while self._servidor_ativo and len(self.jogadores_conectados) < 2:
+            try:
+                conexao, endereco = self.socket_tcp.accept()
+            except socket.timeout:
+                continue
+            except OSError:
+                break
+
             identificador_jogador = f"player-{len(self.jogadores_conectados) + 1}"
             self.registrar_jogador(identificador_jogador, conexao)
             print(f"Cliente conectado: {identificador_jogador} em {endereco}")
@@ -43,6 +56,13 @@ class ServidorQuiz:
     def enviar_mensagem(self, socket_cliente: socket.socket, tipo_mensagem: TipoMensagem, dados: dict):
         mensagem = criar_mensagem(tipo_mensagem, dados)
         socket_cliente.sendall(codificar_mensagem(mensagem))
+
+    def receber_mensagem(self, identificador_jogador: str):
+        socket_jogador = self.jogadores_conectados[identificador_jogador]
+        dados = socket_jogador.recv(4096)
+        if not dados:
+            return None
+        return __import__("json").loads(dados.decode("utf-8"))
 
     def transmitir(self, tipo_mensagem: TipoMensagem, dados: dict):
         for cliente in self.jogadores_conectados.values():
@@ -80,6 +100,40 @@ class ServidorQuiz:
             self.estado_jogo["posicao_barra"] += resultado["delta_barra"] * resultado["direcao_barra"]
 
         return resultado
+
+    def escutar_ping_udp(self):
+        while self._servidor_ativo:
+            try:
+                dados, endereco = self.socket_udp.recvfrom(4096)
+            except socket.timeout:
+                continue
+            except OSError:
+                break
+
+            if not dados:
+                continue
+
+            mensagem = json.loads(dados.decode("utf-8"))
+            self.ultimo_ping = mensagem
+            resposta = criar_mensagem(TipoMensagem.PONG, {"id_jogador": mensagem.get("id_jogador", "cliente")})
+            self.socket_udp.sendto(codificar_mensagem(resposta), endereco)
+
+    def fechar_servidor(self):
+        self._servidor_ativo = False
+        for socket_jogador in self.jogadores_conectados.values():
+            try:
+                socket_jogador.close()
+            except OSError:
+                pass
+        self.jogadores_conectados.clear()
+
+        for atributo in ("socket_tcp", "socket_udp"):
+            socket_servidor = getattr(self, atributo, None)
+            if socket_servidor is not None:
+                try:
+                    socket_servidor.close()
+                except OSError:
+                    pass
 
     def finalizar_rodada(self, vencedor: str | None = None):
         self.transmitir(TipoMensagem.FIM_RODADA, {"vencedor": vencedor, "rodada": self.estado_jogo["rodada"]})
