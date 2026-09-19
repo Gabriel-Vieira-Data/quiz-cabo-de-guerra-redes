@@ -124,6 +124,17 @@ class ServidorQuiz:
         for cliente in self.jogadores_conectados.values():
             self.enviar_mensagem(cliente, tipo_mensagem, dados)
 
+    def enviar_pergunta_para_sala(self, codigo_sala: str, pergunta: dict):
+        sala = self.salas.get(codigo_sala)
+        if not sala:
+            raise ValueError(f"Sala {codigo_sala} não existe.")
+
+        mensagem = criar_mensagem(TipoMensagem.PERGUNTA, pergunta)
+        for id_jogador in sala["jogadores"]:
+            socket_jogador = self.jogadores_conectados.get(id_jogador)
+            if socket_jogador is not None:
+                socket_jogador.sendall(codificar_mensagem(mensagem))
+
     def lidar_com_pergunta(self, pergunta: dict):
         self.transmitir(TipoMensagem.PERGUNTA, pergunta)
 
