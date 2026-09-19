@@ -1,39 +1,39 @@
 import json
 
-from src.common.protocol import MessageType, build_message, decode_message, encode_message
+from src.common.protocol import TipoMensagem, criar_mensagem, decodificar_mensagem, codificar_mensagem
 
 
-def test_build_message_has_type_and_payload():
-    message = build_message(
-        MessageType.JOIN,
-        {"player_id": "player-1", "nickname": "Alice"},
+def test_criar_mensagem_tem_tipo_e_dados():
+    mensagem = criar_mensagem(
+        TipoMensagem.ENTRAR,
+        {"id_jogador": "player-1", "apelido": "Alice"},
     )
 
-    assert message["type"] == MessageType.JOIN
-    assert message["player_id"] == "player-1"
-    assert message["nickname"] == "Alice"
+    assert mensagem["tipo"] == TipoMensagem.ENTRAR
+    assert mensagem["id_jogador"] == "player-1"
+    assert mensagem["apelido"] == "Alice"
 
 
-def test_encode_and_decode_round_trip():
+def test_codificar_e_decodificar_round_trip():
     original = {
-        "type": MessageType.QUESTION,
-        "round_id": 2,
-        "question": "Qual protocolo é orientado à conexão?",
-        "options": ["TCP", "UDP", "ICMP", "ARP"],
-        "time_limit": 10,
+        "tipo": TipoMensagem.PERGUNTA,
+        "rodada_id": 2,
+        "pergunta": "Qual protocolo é orientado à conexão?",
+        "opcoes": ["TCP", "UDP", "ICMP", "ARP"],
+        "tempo_limite": 10,
     }
 
-    encoded = encode_message(original)
-    decoded = decode_message(encoded)
+    codificado = codificar_mensagem(original)
+    decodificado = decodificar_mensagem(codificado)
 
-    assert isinstance(encoded, bytes)
-    assert decoded == original
+    assert isinstance(codificado, bytes)
+    assert decodificado == original
 
 
-def test_decode_message_accepts_json_bytes_and_str():
-    payload = json.dumps({"type": MessageType.READY, "player_id": "player-2"}).encode("utf-8")
+def test_decodificar_mensagem_aceita_json_em_bytes_e_str():
+    payload = json.dumps({"tipo": TipoMensagem.PRONTO, "id_jogador": "player-2"}).encode("utf-8")
 
-    decoded = decode_message(payload)
+    decodificado = decodificar_mensagem(payload)
 
-    assert decoded["type"] == MessageType.READY
-    assert decoded["player_id"] == "player-2"
+    assert decodificado["tipo"] == TipoMensagem.PRONTO
+    assert decodificado["id_jogador"] == "player-2"

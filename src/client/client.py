@@ -1,37 +1,40 @@
 import socket
 
-from src.common.protocol import MessageType, build_message, decode_message, encode_message
+from src.common.protocol import TipoMensagem, criar_mensagem, decodificar_mensagem, codificar_mensagem
 
 
-class QuizClient:
-    def __init__(self, host: str = "127.0.0.1", tcp_port: int = 5000, udp_port: int = 5001):
+class ClienteQuiz:
+    def __init__(self, host: str = "127.0.0.1", porta_tcp: int = 5000, porta_udp: int = 5001):
         self.host = host
-        self.tcp_port = tcp_port
-        self.udp_port = udp_port
-        self.tcp_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.porta_tcp = porta_tcp
+        self.porta_udp = porta_udp
+        self.socket_tcp = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.socket_udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
-    def connect(self):
-        self.tcp_socket.connect((self.host, self.tcp_port))
-        self.udp_socket.bind((self.host, self.udp_port))
+    def conectar(self):
+        self.socket_tcp.connect((self.host, self.porta_tcp))
+        self.socket_udp.bind((self.host, self.porta_udp))
 
-    def send_join(self, player_id: str, nickname: str):
-        message = build_message(MessageType.JOIN, {"player_id": player_id, "nickname": nickname})
-        self.tcp_socket.sendall(encode_message(message))
+    def enviar_entrada(self, id_jogador: str, apelido: str):
+        mensagem = criar_mensagem(TipoMensagem.ENTRAR, {"id_jogador": id_jogador, "apelido": apelido})
+        self.socket_tcp.sendall(codificar_mensagem(mensagem))
 
-    def send_answer(self, player_id: str, round_id: int, answer: str):
-        message = build_message(
-            MessageType.ANSWER,
-            {"player_id": player_id, "round_id": round_id, "answer": answer},
+    def enviar_resposta(self, id_jogador: str, rodada_id: int, resposta: str):
+        mensagem = criar_mensagem(
+            TipoMensagem.RESPOSTA,
+            {"id_jogador": id_jogador, "rodada_id": rodada_id, "resposta": resposta},
         )
-        self.tcp_socket.sendall(encode_message(message))
+        self.socket_tcp.sendall(codificar_mensagem(mensagem))
 
-    def receive_message(self):
-        data = self.tcp_socket.recv(4096)
-        if not data:
+    def receber_mensagem(self):
+        dados = self.socket_tcp.recv(4096)
+        if not dados:
             return None
-        return decode_message(data)
+        return decodificar_mensagem(dados)
 
-    def send_udp_ping(self):
-        ping = build_message(MessageType.PING, {"player_id": "client"})
-        self.udp_socket.sendto(encode_message(ping), (self.host, self.udp_port))
+    def enviar_ping_udp(self):
+        ping = criar_mensagem(TipoMensagem.PING, {"id_jogador": "cliente"})
+        self.socket_udp.sendto(codificar_mensagem(ping), (self.host, self.porta_udp))
+
+
+QuizClient = ClienteQuiz

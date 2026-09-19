@@ -2,37 +2,43 @@ import json
 from enum import Enum
 
 
-class MessageType(str, Enum):
-    JOIN = "JOIN"
-    READY = "READY"
-    QUESTION = "QUESTION"
-    ANSWER = "ANSWER"
-    RESULT = "RESULT"
-    UPDATE_BAR = "UPDATE_BAR"
-    END_ROUND = "END_ROUND"
-    END_GAME = "END_GAME"
+class TipoMensagem(str, Enum):
+    ENTRAR = "ENTRAR"
+    PRONTO = "PRONTO"
+    PERGUNTA = "PERGUNTA"
+    RESPOSTA = "RESPOSTA"
+    RESULTADO = "RESULTADO"
+    ATUALIZAR_BARRA = "ATUALIZAR_BARRA"
+    FIM_RODADA = "FIM_RODADA"
+    FIM_JOGO = "FIM_JOGO"
     PING = "PING"
     PONG = "PONG"
 
 
-def build_message(message_type: MessageType, payload: dict | None = None) -> dict:
-    """Cria uma mensagem padronizada com type e payload."""
-    message = {"type": message_type.value if isinstance(message_type, MessageType) else str(message_type)}
+def criar_mensagem(tipo_mensagem: TipoMensagem, dados: dict | None = None) -> dict:
+    """Cria uma mensagem padronizada com tipo e payload."""
+    mensagem = {"tipo": tipo_mensagem.value if isinstance(tipo_mensagem, TipoMensagem) else str(tipo_mensagem)}
 
-    if payload:
-        message.update(payload)
+    if dados:
+        mensagem.update(dados)
 
-    return message
+    return mensagem
 
 
-def encode_message(message: dict) -> bytes:
+def codificar_mensagem(mensagem: dict) -> bytes:
     """Serializa uma mensagem em JSON em bytes."""
-    return json.dumps(message, ensure_ascii=False).encode("utf-8")
+    return json.dumps(mensagem, ensure_ascii=False).encode("utf-8")
 
 
-def decode_message(raw_message: bytes | str) -> dict:
+def decodificar_mensagem(mensagem_bruta: bytes | str) -> dict:
     """Desserializa uma mensagem JSON em dicionário."""
-    if isinstance(raw_message, bytes):
-        raw_message = raw_message.decode("utf-8")
+    if isinstance(mensagem_bruta, bytes):
+        mensagem_bruta = mensagem_bruta.decode("utf-8")
 
-    return json.loads(raw_message)
+    return json.loads(mensagem_bruta)
+
+
+MessageType = TipoMensagem
+build_message = criar_mensagem
+encode_message = codificar_mensagem
+decode_message = decodificar_mensagem
