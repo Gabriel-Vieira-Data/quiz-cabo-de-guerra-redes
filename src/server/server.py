@@ -16,12 +16,16 @@ class ServidorQuiz:
             "posicao_barra": 0,
             "rodada": 1,
             "maximo_rodadas": 10,
+            "pontuacao": {"player-1": 0, "player-2": 0},
+            "vencedor": None,
         }
         self.ultimo_ping = None
         self._servidor_ativo = False
 
     def registrar_jogador(self, identificador_jogador: str, socket_jogador: socket.socket):
         self.jogadores_conectados[identificador_jogador] = socket_jogador
+        if identificador_jogador not in self.estado_jogo["pontuacao"]:
+            self.estado_jogo["pontuacao"][identificador_jogador] = 0
 
     def iniciar_servidor_tcp(self):
         self._servidor_ativo = True
@@ -74,6 +78,37 @@ class ServidorQuiz:
     def atualizar_barra(self, direcao: int):
         self.estado_jogo["posicao_barra"] += direcao
         self.transmitir(TipoMensagem.ATUALIZAR_BARRA, {"posicao": self.estado_jogo["posicao_barra"]})
+
+    def iniciar_partida(self):
+        self.estado_jogo["rodada"] = 1
+        self.estado_jogo["posicao_barra"] = 0
+        self.estado_jogo["vencedor"] = None
+        for jogador in self.jogadores_conectados:
+            self.estado_jogo["pontuacao"].setdefault(jogador, 0)
+        return {
+            "rodada": self.estado_jogo["rodada"],
+            "maximo_rodadas": self.estado_jogo["maximo_rodadas"],
+            "pontuacao": self.estado_jogo["pontuacao"],
+        }
+
+    def registrar_pontuacao(self, jogador: str):
+        if jogador not in self.estado_jogo["pontuacao"]:
+            self.estado_jogo["pontuacao"][jogador] = 0
+
+        self.estado_jogo["pontuacao"][jogador] += 1
+        if self.estado_jogo["pontuacao"][jogador] >= 2:
+            self.estado_jogo["vencedor"] = jogador
+
+    def avancar_rodada(self):
+        if self.estado_jogo["vencedor"] is not None:
+            return False
+
+        if self.estado_jogo["rodada"] < self.estado_jogo["maximo_rodadas"]:
+            self.estado_jogo["rodada"] += 1
+            self.estado_jogo["posicao_barra"] = 0
+            return True
+
+        return False
 
     def processar_resposta(
         self,
