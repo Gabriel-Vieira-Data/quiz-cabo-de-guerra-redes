@@ -9,41 +9,23 @@ Projeto de Redes de Computadores - Quiz 1v1 com Sockets em Python
 python -m src.server.server
 ```
 
-### 2. Abrir dois clientes
+### 2. Abrir a interface gráfica para testar o jogo
 
-No terminal 1:
-
-```bash
-python - <<'PY'
-from src.client.client import ClienteQuiz
-
-cliente = ClienteQuiz(host='127.0.0.1', porta_tcp=5000, porta_udp=5002)
-cliente.conectar()
-cliente.enviar_entrada('player-1', 'Alice')
-print(cliente.receber_mensagem())
-PY
-```
-
-No terminal 2:
+Primeiro terminal (jogador 1):
 
 ```bash
-python - <<'PY'
-from src.client.client import ClienteQuiz
-
-cliente = ClienteQuiz(host='127.0.0.1', porta_tcp=5000, porta_udp=5003)
-cliente.conectar()
-cliente.enviar_entrada('player-2', 'Bob')
-print(cliente.receber_mensagem())
-PY
+python -m src.client.gui --id-jogador player-1 --apelido Alice --porta-udp 5002
 ```
 
-### 3. Enviar resposta
+Segundo terminal (jogador 2):
 
-```python
-cliente.enviar_resposta('player-1', 1, 'TCP')
+```bash
+python -m src.client.gui --id-jogador player-2 --apelido Bob --porta-udp 5003
 ```
 
-### 4. Rodar testes
+Cada janela representa um jogador e usa sua própria porta UDP, permitindo testar o jogo em duas interfaces ao mesmo tempo no mesmo computador.
+
+### 3. Rodar testes
 
 ```bash
 python -m pytest -q
