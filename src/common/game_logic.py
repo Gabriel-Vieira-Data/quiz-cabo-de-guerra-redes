@@ -1,4 +1,20 @@
+"""
+Lógica do jogo Quiz Cabo de Guerra.
+
+Convenção de barra:
+  direcao_barra = +1 → jogador_a ganha a rodada, barra vai para o lado de A
+  direcao_barra = -1 → jogador_b ganha a rodada, barra vai para o lado de B
+  posicao_barra positiva → jogador_a está na frente
+  posicao_barra negativa → jogador_b está na frente
+
+A partida pode ser vencida por:
+  1. Acumulação de pontos (pontos_para_vencer)
+  2. Fim das rodadas (quem tiver mais pontos)
+"""
 from dataclasses import dataclass, field
+
+LIMITE_BARRA = 5
+MAXIMO_RODADAS = 10
 
 
 @dataclass
@@ -14,46 +30,103 @@ class RodadaJogo:
 
 @dataclass
 class EstadoJogo:
-    maximo_rodadas: int = 10
+    jogador_a: str = "player-1"
+    jogador_b: str = "player-2"
+    maximo_rodadas: int = MAXIMO_RODADAS
     rodada_atual: int = 1
     posicao_barra: int = 0
     pontos_para_vencer: int = 3
-    pontuacao_jogadores: dict[str, int] = field(default_factory=lambda: {"player-1": 0, "player-2": 0})
+    pontuacao_jogadores: dict = field(default_factory=dict)
     vencedor: str | None = None
 
+    def __post_init__(self):
+        if not self.pontuacao_jogadores:
+            self.pontuacao_jogadores = {self.jogador_a: 0, self.jogador_b: 0}
+
+    # ------------------------------------------------------------------ #
+    # API pública                                                          #
+    # ------------------------------------------------------------------ #
+
     def avancar_rodada(self) -> bool:
+        """Avança para a próxima rodada. Retorna False se já estiver na última ou se houver vencedor."""
+        if self.vencedor is not None:
+            return False
         if self.rodada_atual < self.maximo_rodadas:
             self.rodada_atual += 1
-            self.posicao_barra = 0
             return True
-
-        self.posicao_barra = 0
         return False
 
-    def registrarResultadoRodada(self, vencedor: str | None):
-        if vencedor is None or vencedor == "nenhum":
-            return
-
-        if vencedor == "empate":
-            return
-
-        if vencedor in self.pontuacao_jogadores:
-            self.pontuacao_jogadores[vencedor] += 1
-            if self.pontuacao_jogadores[vencedor] >= self.pontos_para_vencer:
-                self.vencedor = vencedor
-
     def atualizar_barra(self, delta: int):
+        """Move a barra em `delta` unidades (positivo = lado A, negativo = lado B)."""
         self.posicao_barra += delta
 
-    def terminou(self):
+    def registrarResultadoRodada(self, vencedor: str | None):
+        """
+        Registra o resultado de uma rodada e atualiza pontuação/barra/vencedor.
+        Compatibilidade com testes legados.
+        """
+        if vencedor is None or vencedor in ("nenhum", "empate"):
+            return
+
+        self.pontuacao_jogadores[vencedor] = self.pontuacao_jogadores.get(vencedor, 0) + 1
+
+        # Move a barra
+        if vencedor == self.jogador_a:
+            self.posicao_barra += 1
+        else:
+            self.posicao_barra -= 1
+
+        # Verifica condição de vitória por pontos
+        if self.pontuacao_jogadores[vencedor] >= self.pontos_para_vencer:
+            self.vencedor = vencedor
+
+    def registrar_resultado_rodada(self, vencedor_rodada: str | None) -> str | None:
+        """
+        Versão usada pelo servidor: registra e retorna o vencedor da partida se houver.
+        """
+        self.registrarResultadoRodada(vencedor_rodada)
+        return self.vencedor
+
+    def verificar_fim_de_jogo(self) -> str | None:
+        """
+        Verifica se o jogo terminou após a rodada atual.
+        Deve ser chamado após registrar_resultado_rodada quando o jogo está na última rodada.
+        """
+        if self.vencedor:
+            return self.vencedor
+
+        if self.rodada_atual < self.maximo_rodadas:
+            return None
+
+        # Última rodada: desempata pela posição da barra
+        if self.posicao_barra > 0:
+            self.vencedor = self.jogador_a
+        elif self.posicao_barra < 0:
+            self.vencedor = self.jogador_b
+        else:
+            # Empate na barra → desempata por pontuação
+            pts_a = self.pontuacao_jogadores.get(self.jogador_a, 0)
+            pts_b = self.pontuacao_jogadores.get(self.jogador_b, 0)
+            if pts_a > pts_b:
+                self.vencedor = self.jogador_a
+            elif pts_b > pts_a:
+                self.vencedor = self.jogador_b
+            else:
+                self.vencedor = "empate"
+
+        return self.vencedor
+
+    def terminou(self) -> bool:
         if self.vencedor is not None:
             return True
-
         if self.rodada_atual >= self.maximo_rodadas:
             return True
+        return any(p >= self.pontos_para_vencer for p in self.pontuacao_jogadores.values())
 
-        return any(pontos >= self.pontos_para_vencer for pontos in self.pontuacao_jogadores.values())
 
+# ---------------------------------------------------------------------------
+# Função utilitária de resolução de rodada
+# ---------------------------------------------------------------------------
 
 def resolverResultadoRodada(
     jogador_a: str,
@@ -61,22 +134,29 @@ def resolverResultadoRodada(
     resposta_a: str,
     resposta_b: str,
     resposta_correta: str = "TCP",
-):
-    """Determina quem responde corretamente e atualiza a barra do cabo de guerra."""
-    resposta_correta_normalizada = resposta_correta.strip().upper()
-    correta_a = resposta_a.strip().upper() == resposta_correta_normalizada
-    correta_b = resposta_b.strip().upper() == resposta_correta_normalizada
+) -> dict:
+    """
+    Determina o vencedor de uma rodada sem considerar timing.
 
-    if correta_a and not correta_b:
+    Retorna:
+      vencedor      : id do vencedor, "empate" ou "nenhum"
+      delta_barra   : quanto a barra se move (0 ou 1)
+      direcao_barra : +1 = jogador_a vence, -1 = jogador_b vence, 0 = ninguém
+    """
+    correta = resposta_correta.strip().upper()
+    acertou_a = resposta_a.strip().upper() == correta
+    acertou_b = resposta_b.strip().upper() == correta
+
+    if acertou_a and not acertou_b:
         return {"vencedor": jogador_a, "delta_barra": 1, "direcao_barra": 1}
-    if correta_b and not correta_a:
+    if acertou_b and not acertou_a:
         return {"vencedor": jogador_b, "delta_barra": 1, "direcao_barra": -1}
-    if correta_a and correta_b:
+    if acertou_a and acertou_b:
         return {"vencedor": "empate", "delta_barra": 0, "direcao_barra": 0}
-
     return {"vencedor": "nenhum", "delta_barra": 0, "direcao_barra": 0}
 
 
+# Aliases para retrocompatibilidade
 GameRound = RodadaJogo
 QuizGameState = EstadoJogo
 resolve_round_result = resolverResultadoRodada
