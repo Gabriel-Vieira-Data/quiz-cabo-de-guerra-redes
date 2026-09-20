@@ -17,11 +17,9 @@ src/
 │   └── banco_perguntas.py  ← fonte das perguntas (JSON ou embutido)
 ├── server/
 │   └── server.py           ← ServidorQuiz: sockets, salas, rodadas, timers
-├── client/
-│   ├── client.py           ← ClienteQuiz: transporte + dispatcher (use no front)
-│   └── gui.py              ← interface Tkinter (referência de UI)
-└── network/
-    └── socket_utils.py     ← utilitários de socket de baixo nível
+└── client/
+    ├── client.py           ← ClienteQuiz: transporte + dispatcher (use no front)
+    └── gui.py              ← interface Tkinter (referência de UI)
 ```
 
 **Regra de ouro:** a lógica de jogo (`game_logic.py`) é **pura** — não conhece
@@ -115,22 +113,20 @@ Estas partes são delicadas por causa de concorrência (threads):
 
 ---
 
-## 5. Código legado (pode ignorar / candidato a remover)
+## 5. Código de compatibilidade (existe só para os testes)
 
-Estes existem só para os testes antigos e **não** fazem parte do fluxo real de
-rede. Não construa em cima deles:
+Estes métodos **não** fazem parte do fluxo real de rede — existem apenas porque
+os testes unitários os usam como atalho. Não construa o frontend em cima deles:
 
 - `_EstadoJogoProxy` e `self.estado_jogo` — o estado real vive em
   `self.estado_por_sala[codigo]`, não no proxy global.
-- Bloco "APIs de compatibilidade com testes legados" no fim do `server.py`:
-  `lidar_com_pergunta`, `processar_resposta`, `avancar_rodada`,
-  `registrar_pontuacao`, `iniciar_partida`, `atualizar_barra`, `finalizar_jogo`,
-  `finalizar_rodada`, `avancar_para_proxima_pergunta`, `criar_sala`,
-  `registrar_jogador`, `receber_mensagem(id)`.
-- Aliases em inglês: `QuizServer`, `QuizClient`, `MessageType`, etc.
+- No fim do `server.py`: `lidar_com_pergunta`, `processar_resposta`,
+  `avancar_rodada` (versão do servidor), `registrar_pontuacao`,
+  `iniciar_partida`, `criar_sala`, `registrar_jogador`, `remover_jogador`.
 
-Se quiser limpar, é possível remover esses métodos e ajustar/remover os testes
-que os usam — mas não é obrigatório para o frontend.
+O código morto (métodos e aliases sem nenhum uso, além do módulo
+`socket_utils.py`) já foi removido. O que sobrou de "compatibilidade" ainda é
+usado ativamente pelos testes, então removê-lo exigiria reescrever os testes.
 
 ---
 

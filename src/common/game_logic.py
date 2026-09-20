@@ -90,13 +90,6 @@ class EstadoJogo:
         if self.pontuacao_jogadores[vencedor] >= self.pontos_para_vencer:
             self.vencedor = vencedor
 
-    def registrar_resultado_rodada(self, vencedor_rodada: str | None) -> str | None:
-        """
-        Versão usada pelo servidor: registra e retorna o vencedor da partida se houver.
-        """
-        self.registrarResultadoRodada(vencedor_rodada)
-        return self.vencedor
-
     def verificar_fim_de_jogo(self) -> str | None:
         """
         Verifica se o jogo terminou após a rodada atual.
@@ -172,7 +165,4 @@ def resolverResultadoRodada(
     return {"vencedor": "nenhum", "delta_barra": 0, "direcao_barra": 0}
 
 
-# Aliases para retrocompatibilidade
-GameRound = RodadaJogo
-QuizGameState = EstadoJogo
-resolve_round_result = resolverResultadoRodada
+

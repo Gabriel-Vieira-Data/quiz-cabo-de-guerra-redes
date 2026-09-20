@@ -155,10 +155,4 @@ def decodificar_mensagem(mensagem_bruta: bytes | str) -> dict:
     return json.loads(mensagem_bruta)
 
 
-# ── Aliases em inglês (compatibilidade com testes/código antigos) ──────────
-# Mantidos apenas para não quebrar imports existentes. Código novo deve usar
-# os nomes em português acima.
-MessageType = TipoMensagem
-build_message = criar_mensagem
-encode_message = codificar_mensagem
-decode_message = decodificar_mensagem
+

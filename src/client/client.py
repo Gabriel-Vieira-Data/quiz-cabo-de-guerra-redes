@@ -282,5 +282,3 @@ class ClienteQuiz:
         return self.receber_pong_udp(timeout=timeout)
 
 
-# Alias em inglês (compatibilidade). Código novo deve usar ClienteQuiz.
-QuizClient = ClienteQuiz

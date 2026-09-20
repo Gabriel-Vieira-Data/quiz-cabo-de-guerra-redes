@@ -208,6 +208,3 @@ class BancoPerguntas:
         """Sorteia uma única pergunta ao acaso."""
         return random.choice(self.obter_perguntas())
 
-
-# Alias em inglês (compatibilidade). Código novo deve usar BancoPerguntas.
-BancoPerguntasRedes = BancoPerguntas

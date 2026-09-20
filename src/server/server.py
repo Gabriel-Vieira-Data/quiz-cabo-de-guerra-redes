@@ -679,9 +679,6 @@ class ServidorQuiz:
         except (OSError, AttributeError, TypeError):
             return False
 
-    def enviar_mensagem(self, socket_cliente, tipo_mensagem: TipoMensagem, dados: dict) -> bool:
-        return self._enviar_mensagem_socket(socket_cliente, tipo_mensagem, dados)
-
     def transmitir(self, tipo_mensagem: TipoMensagem, dados: dict):
         for cliente in list(self.jogadores_conectados.values()):
             self._enviar_mensagem_socket(cliente, tipo_mensagem, dados)
@@ -1029,24 +1026,6 @@ class ServidorQuiz:
             "pontuacao": estado.pontuacao_jogadores,
         }
 
-    def atualizar_barra(self, direcao: int):
-        estado = self.estado_por_sala.get("sala-1", self._estado_global)
-        estado.posicao_barra += direcao
-        self.estado_jogo._sync()
-        self.transmitir(TipoMensagem.ATUALIZAR_BARRA, {
-            "posicao": estado.posicao_barra, "pontuacao": {},
-        })
-
-    def finalizar_jogo(self, vencedor: str):
-        self.transmitir(TipoMensagem.FIM_JOGO, {"vencedor": vencedor, "pontuacao": {}})
-
-    def finalizar_rodada(self, codigo_sala: str | None = None, vencedor: str | None = None):
-        if codigo_sala:
-            self._resolver_rodada(codigo_sala, vencedor)
-
-    def avancar_para_proxima_pergunta(self, codigo_sala: str):
-        self._iniciar_proxima_rodada(codigo_sala)
-
     def remover_jogador(self, id_jogador: str):
         with self._lock:
             sock = self.jogadores_conectados.pop(id_jogador, None)
@@ -1066,23 +1045,6 @@ class ServidorQuiz:
                     if not sala["jogadores"]:
                         self._limpar_sala(codigo_sala)
                     break
-
-    def receber_mensagem(self, identificador_jogador: str):
-        """Leitura síncrona usada em alguns testes de integração."""
-        sock = self.jogadores_conectados.get(identificador_jogador)
-        if sock is None:
-            return None
-        dados = sock.recv(4096)
-        if not dados:
-            return None
-        if len(dados) >= 4:
-            tamanho = int.from_bytes(dados[:4], byteorder="big", signed=False)
-            if len(dados) >= 4 + tamanho:
-                dados = dados[4 : 4 + tamanho]
-        return json.loads(dados.decode("utf-8"))
-
-
-QuizServer = ServidorQuiz
 
 
 if __name__ == "__main__":
