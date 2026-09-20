@@ -2,9 +2,17 @@
 
 Duelo de perguntas 1v1 em tempo real via sockets TCP/UDP em Python puro.
 
-## Como jogar
+## Como jogar (jeito fácil — Windows)
 
-Você precisa de **3 terminais** abertos na pasta do projeto.
+Dê **duplo clique** no arquivo `iniciar_jogo.bat`. Ele detecta o Python
+automaticamente e abre três janelas: o servidor e os dois jogadores (Alice e
+Bob). Em cada janela de jogador, clique em **Conectar** e a partida começa.
+
+---
+
+## Como jogar (manual — 3 terminais)
+
+Se preferir iniciar na mão, você precisa de **3 terminais** abertos na pasta do projeto.
 
 ---
 

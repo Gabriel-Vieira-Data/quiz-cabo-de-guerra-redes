@@ -114,6 +114,14 @@ def test_servidor_registra_respostas_por_sala_e_resolve_rodada_quando_os_dois_jo
 
 
 def test_servidor_lida_com_multiplas_mensagens_na_mesma_conexao():
+    """
+    Verifica que o servidor consegue parsear e processar múltiplas mensagens JSON
+    puras numa mesma conexão. Como o processamento termina com b'' (conexão
+    fechada), o servidor limpa o jogador ao final — então capturamos o estado
+    no momento em que cada mensagem é processada, não depois.
+    """
+    estados_capturados = []
+
     class SoqueteFake:
         def __init__(self):
             self.mensagens = [
@@ -126,7 +134,11 @@ def test_servidor_lida_com_multiplas_mensagens_na_mesma_conexao():
         def recv(self, tamanho):
             if not self.mensagens:
                 return b""
-            return self.mensagens.pop(0)
+            dados = self.mensagens.pop(0)
+            # Captura o estado logo após a primeira mensagem (ENTRAR) ser lida
+            if dados == b"":
+                estados_capturados.append("player-1" in servidor.jogadores_conectados)
+            return dados
 
         def sendall(self, dados):
             self.enviadas.append(__import__("json").loads(dados.decode("utf-8")))
@@ -136,13 +148,10 @@ def test_servidor_lida_com_multiplas_mensagens_na_mesma_conexao():
 
     servidor.processar_mensagens_de_conexao(soquete)
 
-    assert "player-1" in servidor.jogadores_conectados
-    # Com apenas 1 jogador, a sala pode não ter sido criada ainda
-    if "sala-1" in servidor.salas:
-        jogadores = servidor.salas["sala-1"]["jogadores"]
-        assert "player-1" in jogadores
-    else:
-        assert "player-1" in servidor.fila_espera or "player-1" in servidor.jogadores_conectados
+    # No momento antes de fechar (b""), player-1 estava registrado → ENTRAR processado
+    assert estados_capturados and estados_capturados[0] is True
+    # Após a conexão fechar, o servidor limpa o jogador (comportamento correto)
+    assert "player-1" not in servidor.jogadores_conectados
 
 
 def test_servidor_avanca_para_proxima_pergunta_apos_as_duas_respostas():

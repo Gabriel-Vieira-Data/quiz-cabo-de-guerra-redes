@@ -31,9 +31,9 @@ def test_codificar_e_decodificar_round_trip():
 
 
 def test_decodificar_mensagem_aceita_json_em_bytes_e_str():
-    payload = json.dumps({"tipo": TipoMensagem.PRONTO, "id_jogador": "player-2"}).encode("utf-8")
+    payload = json.dumps({"tipo": TipoMensagem.BEM_VINDO, "id_jogador": "player-2"}).encode("utf-8")
 
     decodificado = decodificar_mensagem(payload)
 
-    assert decodificado["tipo"] == TipoMensagem.PRONTO
+    assert decodificado["tipo"] == TipoMensagem.BEM_VINDO
     assert decodificado["id_jogador"] == "player-2"

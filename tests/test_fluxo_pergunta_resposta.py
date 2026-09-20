@@ -25,7 +25,13 @@ def test_cliente_recebe_pergunta_e_envia_resposta():
         "tempo_limite": 10,
     })
 
+    # O servidor envia BEM_VINDO (ACK de ENTRAR) antes da PERGUNTA.
+    # Pulamos mensagens até chegar na PERGUNTA.
     mensagem = cliente.receber_mensagem()
+    while mensagem is not None and mensagem.get("tipo") != "PERGUNTA":
+        mensagem = cliente.receber_mensagem()
+
+    assert mensagem is not None
     assert mensagem["tipo"] == "PERGUNTA"
     assert mensagem["pergunta"] == "Qual protocolo é orientado à conexão?"
 

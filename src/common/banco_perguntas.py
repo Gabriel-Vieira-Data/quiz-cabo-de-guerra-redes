@@ -1,9 +1,17 @@
+"""
+banco_perguntas.py — Fonte das perguntas de redes usadas no quiz.
+
+Cada pergunta é um dict: {"pergunta": str, "opcoes": [str x4], "resposta_correta": str}.
+Tenta carregar de data/perguntas_redes.json; se o arquivo não existir, usa um
+banco embutido (_perguntas_padrao) — assim o jogo funciona sem configuração.
+"""
 import random
 from pathlib import Path
 
 
 class BancoPerguntas:
     def __init__(self, caminho_arquivo: str | None = None):
+        # Por padrão, procura o JSON em <projeto>/data/perguntas_redes.json.
         if caminho_arquivo is None:
             base_dir = Path(__file__).resolve().parent.parent
             caminho_arquivo = base_dir / "data" / "perguntas_redes.json"
@@ -12,6 +20,7 @@ class BancoPerguntas:
         self._perguntas = self._carregar_perguntas()
 
     def _carregar_perguntas(self):
+        """Carrega do arquivo JSON, ou cai no banco embutido se ele não existir."""
         if not self.caminho_arquivo.exists():
             return self._perguntas_padrao()
 
@@ -20,6 +29,7 @@ class BancoPerguntas:
         with self.caminho_arquivo.open("r", encoding="utf-8") as arquivo:
             dados = json.load(arquivo)
 
+        # Aceita tanto uma lista direta quanto {"perguntas": [...]}.
         if isinstance(dados, list):
             return dados
 
@@ -98,7 +108,7 @@ class BancoPerguntas:
                 "resposta_correta": "22",
             },
             {
-                "pergunta": "Qual dos protocolos abaixo é orientado a conexão?",
+                "pergunta": "Qual protocolo garante entrega ordenada e sem perdas?",
                 "opcoes": ["TCP", "UDP", "ICMP", "IP"],
                 "resposta_correta": "TCP",
             },
@@ -185,15 +195,19 @@ class BancoPerguntas:
         ]
 
     def obter_perguntas(self):
+        """Retorna uma cópia da lista de perguntas (evita mutação externa)."""
         return list(self._perguntas)
 
     def embaralhar(self):
+        """Retorna as perguntas em ordem aleatória (não altera a ordem interna)."""
         perguntas = self.obter_perguntas()
         random.shuffle(perguntas)
         return perguntas
 
     def selecionar_aleatoria(self):
+        """Sorteia uma única pergunta ao acaso."""
         return random.choice(self.obter_perguntas())
 
 
+# Alias em inglês (compatibilidade). Código novo deve usar BancoPerguntas.
 BancoPerguntasRedes = BancoPerguntas

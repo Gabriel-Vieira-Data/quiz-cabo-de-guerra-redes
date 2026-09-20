@@ -19,27 +19,37 @@ MAXIMO_RODADAS = 10
 
 @dataclass
 class RodadaJogo:
-    rodada_id: int
-    pergunta: str
-    resposta_correta: str
-    posicao_barra: int = 0
-    respondida: bool = False
-    vencedor: str | None = None
-    horario_resposta: float | None = None
+    """Representa uma única rodada (pergunta) — usado principalmente em testes."""
+    rodada_id: int                       # número da rodada (1..maximo_rodadas)
+    pergunta: str                        # enunciado
+    resposta_correta: str                # gabarito (só no servidor)
+    posicao_barra: int = 0               # posição da barra no momento
+    respondida: bool = False             # se já foi respondida
+    vencedor: str | None = None          # quem venceu a rodada
+    horario_resposta: float | None = None  # timestamp da resposta vencedora
 
 
 @dataclass
 class EstadoJogo:
-    jogador_a: str = "player-1"
-    jogador_b: str = "player-2"
-    maximo_rodadas: int = MAXIMO_RODADAS
-    rodada_atual: int = 1
-    posicao_barra: int = 0
-    pontos_para_vencer: int = 3
-    pontuacao_jogadores: dict = field(default_factory=dict)
-    vencedor: str | None = None
+    """
+    Estado completo de uma partida entre dois jogadores.
+
+    A barra (posicao_barra) é o coração do "cabo de guerra":
+      > 0 → jogador_a puxou para o seu lado (na frente)
+      < 0 → jogador_b puxou para o seu lado (na frente)
+      == 0 → empatado no centro
+    """
+    jogador_a: str = "player-1"          # id do jogador da esquerda
+    jogador_b: str = "player-2"          # id do jogador da direita
+    maximo_rodadas: int = MAXIMO_RODADAS  # total de rodadas da partida (10)
+    rodada_atual: int = 1                # rodada em andamento
+    posicao_barra: int = 0               # ver docstring da classe
+    pontos_para_vencer: int = 3          # knockout: vence quem chegar a N pontos
+    pontuacao_jogadores: dict = field(default_factory=dict)  # {id: pontos}
+    vencedor: str | None = None          # id do vencedor, "empate" ou None
 
     def __post_init__(self):
+        # Garante que o placar comece zerado para os dois jogadores.
         if not self.pontuacao_jogadores:
             self.pontuacao_jogadores = {self.jogador_a: 0, self.jogador_b: 0}
 
@@ -90,11 +100,17 @@ class EstadoJogo:
     def verificar_fim_de_jogo(self) -> str | None:
         """
         Verifica se o jogo terminou após a rodada atual.
-        Deve ser chamado após registrar_resultado_rodada quando o jogo está na última rodada.
+
+        IMPORTANTE: deve ser chamado ANTES de avancar_rodada(), enquanto
+        rodada_atual ainda reflete a rodada que acabou de ser jogada. Assim, o
+        desempate por barra/pontos só dispara exatamente na última rodada
+        (rodada_atual == maximo_rodadas), evitando o bug off-by-one de terminar
+        cedo demais ou tarde demais.
         """
         if self.vencedor:
             return self.vencedor
 
+        # Só encerra por fim de rodadas quando a última rodada foi concluída
         if self.rodada_atual < self.maximo_rodadas:
             return None
 

@@ -185,9 +185,12 @@ class JanelaQuiz:
     def _desenhar_barra(self, posicao: int, pontuacao: dict):
         """
         Redesenha o canvas da barra cabo de guerra.
-        posicao ∈ [-LIMITE, +LIMITE]:
-          negativo → jogador_a está na frente (azul cresce para a direita do centro)
-          positivo → jogador_b está na frente (vermelho cresce para a esquerda do centro)
+
+        Convenção alinhada com game_logic.EstadoJogo:
+          posicao > 0 → jogador_a (esquerda, AZUL) está na frente → barra puxa p/ ESQUERDA
+          posicao < 0 → jogador_b (direita, VERMELHO) está na frente → barra puxa p/ DIREITA
+          posicao == 0 → empatado no centro
+        O marcador central se desloca proporcionalmente à vantagem.
         """
         c = self.canvas_barra
         c.delete("all")
@@ -197,19 +200,16 @@ class JanelaQuiz:
         # Fundo cinza (trilho)
         c.create_rectangle(0, 8, W, H - 8, fill=COR_BARRA_NEU, outline="", tags="trilho")
 
-        # Extensão da barra colorida
-        # posicao < 0 → A vencendo → preenche da esquerda até o centro
-        # posicao > 0 → B vencendo → preenche do centro até a direita
-        frac = posicao / LIMITE_BARRA           # -1.0 … +1.0
-        deslocamento = int(frac * cx)           # pixels desde o centro
+        # Fração da vantagem (-1.0 … +1.0), limitada ao intervalo válido
+        frac = max(-1.0, min(1.0, posicao / LIMITE_BARRA))
 
-        if posicao < 0:
-            # Azul (A) da esquerda até o marcador
-            marcador_x = cx + deslocamento      # deslocamento < 0 → marcador à esquerda
+        if posicao > 0:
+            # Jogador A na frente → marcador vai para a ESQUERDA, azul preenche à esquerda
+            marcador_x = cx - int(frac * cx)
             c.create_rectangle(0, 8, marcador_x, H - 8, fill=COR_BARRA_A, outline="")
-        elif posicao > 0:
-            # Vermelho (B) do marcador até a direita
-            marcador_x = cx + deslocamento      # deslocamento > 0 → marcador à direita
+        elif posicao < 0:
+            # Jogador B na frente → marcador vai para a DIREITA, vermelho preenche à direita
+            marcador_x = cx - int(frac * cx)   # frac negativo → marcador_x > cx
             c.create_rectangle(marcador_x, 8, W, H - 8, fill=COR_BARRA_B, outline="")
         else:
             marcador_x = cx
@@ -331,13 +331,22 @@ class JanelaQuiz:
 
     def escutar_servidor(self):
         while True:
+            if not self.conectado:
+                return
             try:
                 msg = self.cliente.receber_mensagem()
                 if msg is None:
+                    # None pode ser timeout OU conexão fechada.
+                    # Verifica se o socket ainda está vivo.
+                    if not self._conexao_viva():
+                        self.janela.after(0, self._on_conexao_perdida)
+                        return
                     continue
                 tipo = msg.get("tipo", "")
                 # Despacha para a thread Tk via after() — thread-safe
-                if tipo == "PERGUNTA":
+                if tipo == "BEM_VINDO":
+                    self.janela.after(0, self._on_bem_vindo, msg)
+                elif tipo == "PERGUNTA":
                     self.janela.after(0, self._on_pergunta, msg)
                 elif tipo == "FIM_RODADA":
                     self.janela.after(0, self._on_fim_rodada, msg)
@@ -348,11 +357,54 @@ class JanelaQuiz:
                 elif tipo == "DESCONEXAO":
                     self.janela.after(0, self._on_desconexao, msg)
             except OSError:
-                break
+                self.janela.after(0, self._on_conexao_perdida)
+                return
             except Exception:
                 continue
 
+    def _conexao_viva(self) -> bool:
+        """Verifica se o socket TCP ainda está conectado ao servidor."""
+        try:
+            self.cliente.socket_tcp.getpeername()
+            return True
+        except OSError:
+            return False
+
+    def _on_conexao_perdida(self):
+        """Chamado na thread Tk quando a conexão com o servidor cai."""
+        if not self.conectado:
+            return
+        self.conectado = False
+        self._parar_contagem()
+        self._desativar_opcoes()
+        self._set_status("🔌 Conexão com o servidor perdida.")
+        self.botao_conectar.config(
+            state="normal", text="Reconectar",
+            bg=COR_BTN_CONN, command=self._jogar_novamente,
+        )
+        messagebox.showerror(
+            "Conexão perdida",
+            "A conexão com o servidor foi encerrada. Clique em 'Reconectar' para tentar de novo.",
+        )
+
     # ── Handlers de mensagens (executam na thread Tk) ─────────────────────
+
+    def _on_bem_vindo(self, msg: dict):
+        """
+        ACK de ENTRAR: o servidor confirma nosso id DEFINITIVO (pode ter sido
+        renomeado em caso de colisão). Atualizamos self.id_jogador para casar
+        corretamente com os campos de placar/vencedor nas próximas mensagens.
+        """
+        id_confirmado = msg.get("id_jogador")
+        if id_confirmado:
+            self.id_jogador = id_confirmado
+        apelido = msg.get("apelido")
+        if apelido:
+            self.apelido = apelido
+        if msg.get("em_partida"):
+            self._set_status("Partida encontrada! Boa sorte.")
+        else:
+            self._set_status("Conectado. Aguardando o adversário entrar na sala…")
 
     def _on_pergunta(self, msg: dict):
         self.pergunta_atual = extrair_detalhes_pergunta(msg)
@@ -372,35 +424,64 @@ class JanelaQuiz:
     def _on_fim_rodada(self, msg: dict):
         self._parar_contagem()
         self.rotulo_tempo.config(text="")
-        self._desativar_opcoes()
         self.pergunta_atual = None
 
-        vencedor = msg.get("vencedor", "nenhum")
-        rodada   = msg.get("rodada", "?")
+        vencedor          = msg.get("vencedor", "nenhum")
+        apelido_vencedor  = msg.get("apelido_vencedor")
+        resposta_correta  = msg.get("resposta_correta", "")
+        rodada            = msg.get("rodada", "?")
 
+        # Destaca a resposta correta em verde e as demais em vermelho
+        self._destacar_resposta_correta(resposta_correta)
+
+        nome_venc = apelido_vencedor or vencedor
         if vencedor == self.id_jogador:
-            self._set_status(f"✅ Rodada {rodada}: você acertou primeiro!")
+            self._set_status(f"✅ Rodada {rodada}: você acertou primeiro! (resposta: {resposta_correta})")
         elif vencedor in (None, "nenhum"):
-            self._set_status(f"😐 Rodada {rodada}: ninguém acertou.")
+            self._set_status(f"😐 Rodada {rodada}: ninguém acertou. Resposta certa: {resposta_correta}")
         else:
-            self._set_status(f"❌ Rodada {rodada}: {vencedor} acertou primeiro.")
+            self._set_status(f"❌ Rodada {rodada}: {nome_venc} acertou primeiro. Resposta certa: {resposta_correta}")
+
+    def _destacar_resposta_correta(self, resposta_correta: str):
+        """Pinta o botão da resposta certa de verde; a escolhida errada de vermelho."""
+        escolhida = self.opcoes_var.get()
+        for btn in getattr(self, "_botoes_opcao", []):
+            texto = btn["text"]
+            btn.config(state="disabled")
+            if texto == resposta_correta:
+                btn.config(bg="#16a34a", fg="white", disabledforeground="white")
+            elif texto == escolhida:
+                btn.config(bg="#dc2626", fg="white", disabledforeground="white")
+            else:
+                btn.config(bg="#1e293b", fg="#64748b", disabledforeground="#64748b")
+        botao_enviar = getattr(self, "botao_enviar", None)
+        if botao_enviar:
+            try:
+                botao_enviar.config(state="disabled", bg=COR_BTN_OFF, fg="#64748b")
+            except Exception:
+                pass
 
     def _on_atualizar_barra(self, msg: dict):
         posicao   = msg.get("posicao", 0)
         pontuacao = msg.get("pontuacao", {})
+        apelidos  = msg.get("apelidos", {})
         self._desenhar_barra(posicao, pontuacao)
+        self._atualizar_nomes_barra(pontuacao, apelidos)
 
-        # Atualiza nomes nos rótulos usando as chaves do placar
+    def _atualizar_nomes_barra(self, pontuacao: dict, apelidos: dict):
+        """Atualiza os rótulos de nome da barra usando apelidos (não IDs)."""
         jogadores = list(pontuacao.keys())
         if jogadores:
-            nome_a = jogadores[0]
+            jid_a = jogadores[0]
+            nome_a = apelidos.get(jid_a, jid_a)
             self.rotulo_nome_a.config(
-                text=nome_a if nome_a != self.id_jogador else f"▶ {nome_a}",
+                text=f"▶ {nome_a}" if jid_a == self.id_jogador else nome_a,
             )
         if len(jogadores) > 1:
-            nome_b = jogadores[1]
+            jid_b = jogadores[1]
+            nome_b = apelidos.get(jid_b, jid_b)
             self.rotulo_nome_b.config(
-                text=nome_b if nome_b != self.id_jogador else f"{nome_b} ◀",
+                text=f"{nome_b} ◀" if jid_b == self.id_jogador else nome_b,
             )
 
     def _on_fim_jogo(self, msg: dict):
@@ -408,31 +489,35 @@ class JanelaQuiz:
         self._desativar_opcoes()
         self.pergunta_atual = None
 
-        vencedor  = msg.get("vencedor", "?")
-        pontuacao = msg.get("pontuacao", {})
+        vencedor          = msg.get("vencedor", "?")
+        apelido_vencedor  = msg.get("apelido_vencedor")
+        pontuacao         = msg.get("pontuacao", {})
+        apelidos          = msg.get("apelidos", {})
+        posicao           = msg.get("posicao", 0)
 
-        # Atualiza barra com estado final
-        self._desenhar_barra(
-            -LIMITE_BARRA if vencedor == self.id_jogador else LIMITE_BARRA,
-            pontuacao,
-        )
+        # Desenha a barra na posição REAL final (não força extremo)
+        self._desenhar_barra(posicao, pontuacao)
+        self._atualizar_nomes_barra(pontuacao, apelidos)
 
         if vencedor == "empate":
-            titulo  = "Empate!"
+            titulo  = "🤝 Empate!"
             detalhe = "A partida terminou empatada."
         elif vencedor == self.id_jogador:
             titulo  = "🏆 Você venceu!"
             detalhe = f"Parabéns, {self.apelido}! Você ganhou a partida."
         else:
+            nome_venc = apelido_vencedor or vencedor
             titulo  = "😔 Você perdeu."
-            detalhe = f"{vencedor} venceu a partida."
+            detalhe = f"{nome_venc} venceu a partida."
 
-        placar = "\n".join(f"  {j}: {p} pontos" for j, p in pontuacao.items())
+        # Placar exibido com apelidos
+        placar = "\n".join(
+            f"  {apelidos.get(jid, jid)}: {p} pontos" for jid, p in pontuacao.items()
+        )
         messagebox.showinfo(titulo, f"{detalhe}\n\nPlacar final:\n{placar}")
-        self._set_status(f"Fim de jogo — {titulo}  |  Clique em 'Jogar novamente' para nova partida")
+        self._set_status(f"Fim de jogo — {titulo}  |  Clique em 'Jogar novamente'")
         self.rotulo_rodada.config(text="Partida encerrada")
 
-        # Habilita o botão de reconectar para nova partida
         self.botao_conectar.config(
             state="normal", text="Jogar novamente",
             bg=COR_BTN_CONN, command=self._jogar_novamente,
@@ -440,13 +525,36 @@ class JanelaQuiz:
 
     def _on_desconexao(self, msg: dict):
         dados = extrair_detalhes_desconexao(msg)
-        if dados["id_jogador"] != self.id_jogador:
+        motivo = msg.get("motivo")
+        id_evento = dados["id_jogador"]
+
+        # Timeout de espera (servidor avisa que ninguém entrou)
+        if motivo == "timeout_espera":
+            self._parar_contagem()
+            self._set_status("⏳ Nenhum adversário entrou a tempo.")
+            self.botao_conectar.config(
+                state="normal", text="Tentar novamente",
+                bg=COR_BTN_CONN, command=self._jogar_novamente,
+            )
+            messagebox.showinfo(
+                "Sem adversário",
+                msg.get("mensagem", "Nenhum adversário entrou a tempo. Tente novamente."),
+            )
+            return
+
+        # Desconexão do adversário durante a partida
+        if id_evento != self.id_jogador:
             self._parar_contagem()
             self._desativar_opcoes()
-            self._set_status(f"⚠ {dados['id_jogador']} saiu da partida.")
+            apelido_adv = msg.get("apelido", id_evento)
+            self._set_status(f"⚠ {apelido_adv} saiu da partida.")
+            self.botao_conectar.config(
+                state="normal", text="Jogar novamente",
+                bg=COR_BTN_CONN, command=self._jogar_novamente,
+            )
             messagebox.showwarning(
                 "Adversário desconectado",
-                f"O jogador {dados['id_jogador']} saiu da partida.",
+                f"{apelido_adv} saiu da partida. Você pode iniciar uma nova.",
             )
 
     # ── Envio de resposta ─────────────────────────────────────────────────

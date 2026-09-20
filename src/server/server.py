@@ -70,7 +70,11 @@ class ServidorQuiz:
 
         # Conexões e fila
         self.jogadores_conectados: Dict[str, socket.socket] = {}
+        self.apelidos: Dict[str, str] = {}          # id_jogador → apelido exibido
+        self.socket_para_jogador: dict = {}          # id(socket) → id_jogador (anti-trapaça)
         self.fila_espera: list[str] = []
+        self.tempo_limite_espera = 60                # segundos aguardando 2º jogador
+        self._timers_espera: dict[str, threading.Timer] = {}
 
         # Salas e partidas
         self.salas: dict[str, dict] = {}
@@ -265,40 +269,114 @@ class ServidorQuiz:
                 return self._handle_entrar(mensagem, socket_remetente)
 
             if tipo == TipoMensagem.RESPOSTA.value:
-                return self._handle_resposta(mensagem)
+                return self._handle_resposta(mensagem, socket_remetente)
 
             return mensagem
 
     def _handle_entrar(self, mensagem: dict, socket_remetente):
+        """
+        Trata a mensagem ENTRAR de um cliente:
+          1. Resolve um id único (renomeia se houver colisão).
+          2. Associa o socket ao id (para o anti-trapaça) e guarda o apelido.
+          3. Envia BEM_VINDO ao cliente com o id DEFINITIVO — isso é essencial
+             para o frontend conseguir se identificar no placar depois.
+          4. Coloca na fila; se já houver 2 jogadores, inicia a partida.
+        """
         id_jogador = mensagem.get("id_jogador")
         apelido = mensagem.get("apelido", id_jogador)
         if not id_jogador:
             return None
 
+        # O servidor é a autoridade sobre o id: pode renomear em caso de colisão.
         id_jogador = self._gerar_id_jogador_disponivel(id_jogador)
 
         if socket_remetente is not None:
             self.jogadores_conectados[id_jogador] = socket_remetente
+            # Mapeia o socket → id para validar respostas (anti-trapaça).
+            self.socket_para_jogador[id(socket_remetente)] = id_jogador
+
+        # Guarda o apelido exibível (fallback para o próprio id).
+        self.apelidos[id_jogador] = apelido or id_jogador
 
         self.adicionar_jogador_espera(id_jogador)
         sala = self.criar_sala_para_espera()
+        em_partida = sala is not None and len(sala.get("jogadores", [])) == 2
 
-        if sala is not None and len(sala.get("jogadores", [])) == 2:
+        # ACK de ENTRAR: informa ao cliente seu id definitivo e o estado atual.
+        # Sem isso, o frontend não saberia se foi renomeado nem se já está jogando.
+        if socket_remetente is not None:
+            self._enviar_mensagem_socket(
+                socket_remetente,
+                TipoMensagem.BEM_VINDO,
+                {
+                    "id_jogador": id_jogador,
+                    "apelido": self.apelidos[id_jogador],
+                    "em_partida": em_partida,
+                    "codigo_sala": sala["codigo"] if sala else None,
+                },
+            )
+
+        if em_partida:
+            self._cancelar_timers_espera()
             self.iniciar_partida_em_sala(sala["codigo"])
             self._iniciar_primeira_rodada(sala["codigo"])
-            # Retorna a sala diretamente (contratos de teste exigem isso)
+            # Retorna a sala diretamente (contratos de teste dependem disso).
             return sala
 
-        # Primeiro jogador: ainda aguardando o segundo
+        # Primeiro jogador: agenda um timeout de espera pelo segundo.
+        if socket_remetente is not None:
+            self._agendar_timeout_espera(id_jogador, socket_remetente)
+
         return None
 
-    def _handle_resposta(self, mensagem: dict):
+    def _agendar_timeout_espera(self, id_jogador: str, sock):
+        """Avisa o jogador se ninguém entrar dentro do tempo limite de espera."""
+        def _expirou():
+            with self._lock:
+                # Só dispara se o jogador ainda está esperando (não entrou em partida)
+                if id_jogador in self.fila_espera:
+                    self._enviar_mensagem_socket(
+                        sock,
+                        TipoMensagem.DESCONEXAO,
+                        {
+                            "id_jogador": "servidor",
+                            "motivo": "timeout_espera",
+                            "mensagem": "Nenhum adversário entrou a tempo. Tente novamente.",
+                            "codigo_sala": "sala-1",
+                        },
+                    )
+                    self.fila_espera = [j for j in self.fila_espera if j != id_jogador]
+            self._timers_espera.pop(id_jogador, None)
+
+        timer = threading.Timer(self.tempo_limite_espera, _expirou)
+        timer.daemon = True
+        timer.start()
+        self._timers_espera[id_jogador] = timer
+
+    def _cancelar_timers_espera(self):
+        for timer in self._timers_espera.values():
+            timer.cancel()
+        self._timers_espera.clear()
+
+    def _handle_resposta(self, mensagem: dict, socket_remetente=None):
         id_jogador = mensagem.get("id_jogador")
         rodada_id = mensagem.get("rodada_id", 1)
         resposta = mensagem.get("resposta", "")
 
         if not id_jogador:
             return None
+
+        # Anti-trapaça: se conhecemos o socket, o id_jogador da mensagem DEVE
+        # corresponder ao id associado àquele socket. Isso impede que um cliente
+        # responda "em nome" do adversário.
+        if socket_remetente is not None:
+            id_real = self.socket_para_jogador.get(id(socket_remetente))
+            if id_real is not None and id_real != id_jogador:
+                print(f"[SEGURANÇA] Resposta rejeitada: socket de '{id_real}' tentou responder como '{id_jogador}'")
+                return None
+            # Usa o id verdadeiro do socket, ignorando o que veio na mensagem
+            if id_real is not None:
+                id_jogador = id_real
 
         codigo_sala = self._obter_codigo_sala_do_jogador(id_jogador)
         if codigo_sala is None:
@@ -314,11 +392,11 @@ class ServidorQuiz:
         pergunta = self.selecionar_pergunta_para_sala(codigo_sala)
         estado = self.estado_por_sala.get(codigo_sala)
         rodada_id = estado.rodada_atual if estado else 1
+        # NÃO envia resposta_correta ao cliente — a validação é só no servidor.
         payload = {
             "rodada_id": rodada_id,
             "pergunta": pergunta["pergunta"],
             "opcoes": pergunta["opcoes"],
-            "resposta_correta": pergunta["resposta_correta"],
             "tempo_limite": self.tempo_limite_rodada,
         }
         self.enviar_pergunta_para_sala(codigo_sala, payload)
@@ -441,24 +519,31 @@ class ServidorQuiz:
         partida = self.partidas_ativas.get(codigo_sala, {})
         rodada_corrente = partida.get("rodada", 1)
 
-        # Envia FIM_RODADA
+        pergunta = self.perguntas_rodada.get(codigo_sala, {})
+        resposta_correta = pergunta.get("resposta_correta", "")
+
+        # Envia FIM_RODADA — agora inclui a resposta correta (o jogo já resolveu)
+        # e o apelido do vencedor, para o cliente exibir feedback educativo.
         self.transmitir_para_sala(
             codigo_sala,
             TipoMensagem.FIM_RODADA,
             {
                 "vencedor": vencedor or "nenhum",
+                "apelido_vencedor": self.apelidos.get(vencedor, vencedor) if vencedor else None,
+                "resposta_correta": resposta_correta,
                 "rodada": rodada_corrente,
                 "codigo_sala": codigo_sala,
             },
         )
 
-        # Envia ATUALIZAR_BARRA
+        # Envia ATUALIZAR_BARRA com placar e apelidos
         posicao = estado.posicao_barra if estado else 0
         pontuacao = estado.pontuacao_jogadores.copy() if estado else {}
+        apelidos = {jid: self.apelidos.get(jid, jid) for jid in pontuacao}
         self.transmitir_para_sala(
             codigo_sala,
             TipoMensagem.ATUALIZAR_BARRA,
-            {"posicao": posicao, "pontuacao": pontuacao},
+            {"posicao": posicao, "pontuacao": pontuacao, "apelidos": apelidos},
         )
 
         # Verifica fim de jogo por knockout (via registrar_resultado_rodada já feito acima)
@@ -495,11 +580,11 @@ class ServidorQuiz:
             sala["rodada_atual"] = estado.rodada_atual
 
             pergunta = self.selecionar_pergunta_para_sala(codigo_sala)
+            # NÃO envia resposta_correta ao cliente.
             payload = {
                 "rodada_id": estado.rodada_atual,
                 "pergunta": pergunta["pergunta"],
                 "opcoes": pergunta["opcoes"],
-                "resposta_correta": pergunta["resposta_correta"],
                 "tempo_limite": self.tempo_limite_rodada,
             }
             self.enviar_pergunta_para_sala(codigo_sala, payload)
@@ -508,10 +593,18 @@ class ServidorQuiz:
 
     def _enviar_fim_jogo(self, codigo_sala: str, vencedor: str, estado: EstadoJogo | None):
         pontuacao = estado.pontuacao_jogadores.copy() if estado else {}
+        posicao = estado.posicao_barra if estado else 0
+        apelidos = {jid: self.apelidos.get(jid, jid) for jid in pontuacao}
         self.transmitir_para_sala(
             codigo_sala,
             TipoMensagem.FIM_JOGO,
-            {"vencedor": vencedor, "pontuacao": pontuacao},
+            {
+                "vencedor": vencedor,
+                "apelido_vencedor": self.apelidos.get(vencedor, vencedor) if vencedor and vencedor != "empate" else None,
+                "pontuacao": pontuacao,
+                "posicao": posicao,
+                "apelidos": apelidos,
+            },
         )
         # Agenda limpeza da sala após 3s — dá tempo dos clientes receberem FIM_JOGO
         timer = threading.Timer(3.0, self._resetar_sala_pos_jogo, args=(codigo_sala,))
@@ -613,42 +706,77 @@ class ServidorQuiz:
     # -----------------------------------------------------------------------
 
     def _processar_buffer_cliente(self, buffer: bytes):
-        if not buffer:
-            return [], b""
+        """
+        Extrai TODAS as mensagens completas do buffer de uma vez.
 
-        texto = buffer.lstrip()
-        if texto.startswith(b"{"):
-            try:
-                mensagem = decodificar_mensagem(texto)
-                return [mensagem], b""
-            except Exception:
-                return [], buffer
+        Retorna (lista_de_mensagens, resto_do_buffer). Trata dois formatos:
+          - JSON puro concatenado (usado em testes e no canal de compatibilidade)
+          - Framing com cabeçalho de 4 bytes (formato oficial TCP)
 
-        if len(buffer) >= 4:
-            try:
-                tamanho = int.from_bytes(buffer[:4], byteorder="big", signed=False)
-            except ValueError:
-                tamanho = 0
-            if tamanho > 0 and len(buffer) >= 4 + tamanho:
-                payload = buffer[4 : 4 + tamanho]
-                resto = buffer[4 + tamanho :]
+        Resiliência: se encontrar bytes irrecuperáveis (JSON inválido ou
+        cabeçalho absurdo), descarta o mínimo necessário e segue em frente,
+        em vez de travar a conexão para sempre.
+        """
+        mensagens = []
+
+        while buffer:
+            texto = buffer.lstrip()
+            offset = len(buffer) - len(texto)
+
+            # ── Formato JSON puro ────────────────────────────────────────
+            if texto[:1] == b"{":
                 try:
-                    return [decodificar_mensagem(payload)], resto
-                except Exception:
-                    pass
+                    msg, pos = json.JSONDecoder().raw_decode(texto.decode("utf-8"))
+                    mensagens.append(msg)
+                    buffer = buffer[offset + pos:]
+                    continue
+                except (ValueError, UnicodeDecodeError):
+                    # JSON ainda incompleto? Aguarda mais bytes.
+                    # Se o buffer for grande e ainda inválido, é lixo: descarta 1 byte
+                    # para evitar travar (o cliente reenvia mensagens válidas).
+                    if len(buffer) > 65536:
+                        buffer = buffer[1:]
+                        continue
+                    break
 
-        return [], buffer
+            # ── Formato com cabeçalho de 4 bytes ─────────────────────────
+            if len(buffer) < 4:
+                break  # cabeçalho incompleto — aguarda mais bytes
+
+            tamanho = int.from_bytes(buffer[:4], byteorder="big", signed=False)
+            if tamanho <= 0 or tamanho > 10 * 1024 * 1024:
+                # Cabeçalho inválido (0 ou absurdamente grande): descarta 1 byte
+                # e tenta ressincronizar.
+                buffer = buffer[1:]
+                continue
+
+            if len(buffer) < 4 + tamanho:
+                break  # payload ainda não chegou por completo
+
+            payload = buffer[4 : 4 + tamanho]
+            buffer = buffer[4 + tamanho:]
+            try:
+                mensagens.append(decodificar_mensagem(payload))
+            except Exception:
+                # Payload malformado: já consumimos os bytes, então seguimos.
+                pass
+
+        return mensagens, buffer
 
     def processar_mensagens_de_conexao(self, conexao):
+        """
+        Loop de recepção de uma conexão de cliente (roda em thread própria).
+
+        Lê bytes do socket, acumula no buffer, extrai mensagens completas e
+        despacha cada uma para processar_mensagem(). Ao encerrar (socket fechado
+        ou erro), trata a desconexão notificando o adversário.
+        """
         buffer = b""
         while True:
-            # Respeita _servidor_ativo apenas se o servidor foi iniciado
-            if self._servidor_ativo is False and not buffer:
-                # Tenta receber pelo menos uma vez; se falhar, encerra
-                pass
             try:
                 dados = conexao.recv(4096)
             except socket.timeout:
+                # Timeout é normal; só encerra se o servidor foi desligado.
                 if not self._servidor_ativo:
                     break
                 continue
@@ -656,21 +784,19 @@ class ServidorQuiz:
                 break
 
             if not dados:
-                break
+                break  # socket fechado pelo cliente (EOF)
 
             buffer += dados
-            while True:
-                mensagens, buffer = self._processar_buffer_cliente(buffer)
-                if not mensagens:
-                    break
-                for mensagem in mensagens:
-                    if not mensagem:
-                        continue
-                    tipo = str(mensagem.get("tipo", "")).upper()
-                    id_jogador = mensagem.get("id_jogador")
-                    if tipo == TipoMensagem.ENTRAR.value and id_jogador:
-                        print(f"[TCP] Cliente conectado: {id_jogador}")
-                    self.processar_mensagem(mensagem, conexao)
+            # Extrai TODAS as mensagens completas do buffer numa passada só.
+            mensagens, buffer = self._processar_buffer_cliente(buffer)
+            for mensagem in mensagens:
+                if not mensagem:
+                    continue
+                tipo = str(mensagem.get("tipo", "")).upper()
+                id_jogador = mensagem.get("id_jogador")
+                if tipo == TipoMensagem.ENTRAR.value and id_jogador:
+                    print(f"[TCP] Cliente conectado: {id_jogador}")
+                self.processar_mensagem(mensagem, conexao)
 
         try:
             if hasattr(conexao, "close"):
@@ -678,13 +804,52 @@ class ServidorQuiz:
         except OSError:
             pass
 
-        # Remove o jogador do mapa de conectados quando a conexão encerra
+        # Conexão encerrada: identifica o jogador, notifica o adversário e limpa.
+        self._tratar_desconexao_de_socket(conexao)
+
+    def _tratar_desconexao_de_socket(self, conexao):
+        """
+        Quando um socket cai, remove o jogador, avisa o adversário com DESCONEXAO
+        e encerra a partida daquela sala.
+        """
         with self._lock:
-            for id_jogador, sock in list(self.jogadores_conectados.items()):
-                if sock is conexao:
-                    self.jogadores_conectados.pop(id_jogador, None)
-                    print(f"[TCP] Cliente desconectado: {id_jogador}")
-                    break
+            id_desconectado = self.socket_para_jogador.pop(id(conexao), None)
+            if id_desconectado is None:
+                # Procura pelo socket no mapa de conectados
+                for jid, sock in list(self.jogadores_conectados.items()):
+                    if sock is conexao:
+                        id_desconectado = jid
+                        break
+
+            if id_desconectado is None:
+                return
+
+            self.jogadores_conectados.pop(id_desconectado, None)
+            self.fila_espera = [j for j in self.fila_espera if j != id_desconectado]
+            print(f"[TCP] Cliente desconectado: {id_desconectado}")
+
+            # Encontra a sala do jogador e notifica os demais
+            codigo_sala = self._obter_codigo_sala_do_jogador(id_desconectado)
+            if codigo_sala is not None:
+                sala = self.salas.get(codigo_sala, {})
+                for outro in list(sala.get("jogadores", [])):
+                    if outro == id_desconectado:
+                        continue
+                    sock_outro = self.jogadores_conectados.get(outro)
+                    if sock_outro is not None:
+                        self._enviar_mensagem_socket(
+                            sock_outro,
+                            TipoMensagem.DESCONEXAO,
+                            {
+                                "id_jogador": id_desconectado,
+                                "apelido": self.apelidos.get(id_desconectado, id_desconectado),
+                                "codigo_sala": codigo_sala,
+                            },
+                        )
+                # Encerra a partida da sala
+                self._cancelar_timer_timeout(codigo_sala)
+                self._limpar_sala(codigo_sala)
+                print(f"[SERVIDOR] Partida em {codigo_sala} encerrada por desconexão de {id_desconectado}")
 
     def escutar_cliente(self, conexao):
         self.processar_mensagens_de_conexao(conexao)
@@ -698,8 +863,20 @@ class ServidorQuiz:
                 continue
             except OSError:
                 break
+            # Ativa keepalive TCP na conexão aceita: o SO passa a sondar a outra
+            # ponta periodicamente e detecta conexões "mortas" (half-open) mesmo
+            # quando nenhum dado está sendo trocado.
+            self._ativar_keepalive(conexao)
             thread = threading.Thread(target=self.escutar_cliente, args=(conexao,), daemon=True)
             thread.start()
+
+    @staticmethod
+    def _ativar_keepalive(sock):
+        """Habilita SO_KEEPALIVE em um socket TCP, se suportado pela plataforma."""
+        try:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+        except (OSError, AttributeError):
+            pass  # Alguns ambientes/sockets fake não suportam; ignora.
 
     # -----------------------------------------------------------------------
     # UDP — ping/pong
@@ -718,22 +895,27 @@ class ServidorQuiz:
                 continue
 
             try:
-                # Tenta remover cabeçalho de 4 bytes se presente
+                # UDP transporta datagramas JSON puros (sem cabeçalho de tamanho).
+                # Aceita também formato com cabeçalho por retrocompatibilidade.
                 raw = dados
-                if len(raw) >= 4:
+                if raw[:1] != b"{" and len(raw) >= 4:
                     tamanho = int.from_bytes(raw[:4], byteorder="big", signed=False)
-                    if tamanho > 0 and len(raw) == 4 + tamanho:
-                        raw = raw[4:]
+                    if tamanho > 0 and len(raw) >= 4 + tamanho:
+                        raw = raw[4:4 + tamanho]
                 mensagem = json.loads(raw.decode("utf-8"))
             except Exception:
                 continue
 
             self.ultimo_ping = mensagem
-            resposta = criar_mensagem(
-                TipoMensagem.PONG,
-                {"id_jogador": mensagem.get("id_jogador", "cliente")},
-            )
-            self.socket_udp.sendto(codificar_mensagem(resposta), endereco)
+            # PONG também é enviado como datagrama JSON puro. Ecoamos o campo
+            # "ts" (timestamp) que veio no PING, se houver, para que o cliente
+            # possa calcular o RTT (round-trip time) subtraindo do relógio dele.
+            dados_pong = {"id_jogador": mensagem.get("id_jogador", "cliente")}
+            if "ts" in mensagem:
+                dados_pong["ts"] = mensagem["ts"]
+            resposta = criar_mensagem(TipoMensagem.PONG, dados_pong)
+            payload_pong = json.dumps(resposta, ensure_ascii=False).encode("utf-8")
+            self.socket_udp.sendto(payload_pong, endereco)
 
     # -----------------------------------------------------------------------
     # Inicialização e encerramento
