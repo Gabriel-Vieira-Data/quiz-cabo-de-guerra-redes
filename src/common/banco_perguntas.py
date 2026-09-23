@@ -5,6 +5,7 @@ Cada pergunta é um dict: {"pergunta": str, "opcoes": [str x4], "resposta_corret
 Tenta carregar de data/perguntas_redes.json; se o arquivo não existir, usa um
 banco embutido (_perguntas_padrao) — assim o jogo funciona sem configuração.
 """
+import json
 import random
 from pathlib import Path
 
@@ -20,20 +21,24 @@ class BancoPerguntas:
         self._perguntas = self._carregar_perguntas()
 
     def _carregar_perguntas(self):
-        """Carrega do arquivo JSON, ou cai no banco embutido se ele não existir."""
+        """Carrega do arquivo JSON; cai no banco embutido se ele não existir ou for inválido."""
         if not self.caminho_arquivo.exists():
             return self._perguntas_padrao()
 
-        import json
-
-        with self.caminho_arquivo.open("r", encoding="utf-8") as arquivo:
-            dados = json.load(arquivo)
+        try:
+            with self.caminho_arquivo.open("r", encoding="utf-8") as arquivo:
+                dados = json.load(arquivo)
+        except (json.JSONDecodeError, OSError, UnicodeDecodeError) as erro:
+            print(f"[AVISO] Falha ao ler {self.caminho_arquivo} ({erro}); usando banco de perguntas padrão.")
+            return self._perguntas_padrao()
 
         # Aceita tanto uma lista direta quanto {"perguntas": [...]}.
         if isinstance(dados, list):
-            return dados
+            perguntas = dados
+        else:
+            perguntas = dados.get("perguntas", []) if isinstance(dados, dict) else []
 
-        return dados.get("perguntas", [])
+        return perguntas or self._perguntas_padrao()
 
     def _perguntas_padrao(self):
         return [
