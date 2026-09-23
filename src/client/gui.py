@@ -30,7 +30,9 @@ from tkinter import messagebox
 from src.client.client import ClienteQuiz
 
 # ── Constantes visuais ─────────────────────────────────────────────────────
-COR_FUNDO       = "#0f172a"
+COR_FUNDO_EXTERNO = "#020617"   # moldura externa da janela
+COR_FUNDO       = "#0f172a"     # painel central (card)
+COR_BORDA       = "#1e293b"     # contorno do card e divisórias
 COR_TEXTO       = "#f8fafc"
 COR_STATUS      = "#94a3b8"
 COR_PERGUNTA    = "#e2e8f0"
@@ -43,6 +45,7 @@ COR_BARRA_B     = "#ef4444"   # vermelho — jogador da direita
 COR_BARRA_NEU   = "#475569"   # cinza — zona neutra
 COR_MARCA       = "#f8fafc"   # marcador central
 LIMITE_BARRA    = 5           # deve coincidir com game_logic.LIMITE_BARRA
+FONTE           = "Segoe UI"  # fonte nativa do Windows, visual mais moderno
 
 
 class JanelaQuiz:
@@ -65,46 +68,58 @@ class JanelaQuiz:
         self._thread_escuta: threading.Thread | None = None
         self._timer_contagem: str | None = None   # after-id do Tk
         self._segundos_restantes = 30
+        self._segundos_totais = 30
 
         # ── Janela principal ──────────────────────────────────────────────
         self.janela = tk.Tk()
         self.janela.title("Quiz Cabo de Guerra — Redes")
-        self.janela.geometry("760x600")
         self.janela.resizable(False, False)
-        self.janela.configure(bg=COR_FUNDO)
+        self.janela.configure(bg=COR_FUNDO_EXTERNO)
         self.janela.protocol("WM_DELETE_WINDOW", self._ao_fechar)
 
         self._construir_ui()
+        self._configurar_atalhos_teclado()
+        self._centralizar_janela(780, 740)
 
     # ── Construção da UI ──────────────────────────────────────────────────
 
     def _construir_ui(self):
+        # Card central com borda sutil, flutuando sobre a moldura externa mais escura
+        self.frame_conteudo = tk.Frame(
+            self.janela, bg=COR_FUNDO,
+            highlightbackground=COR_BORDA, highlightthickness=1,
+        )
+        self.frame_conteudo.pack(fill="both", expand=True, padx=18, pady=18)
+
         # Título
         tk.Label(
-            self.janela, text="⚔  Quiz Cabo de Guerra  ⚔",
-            font=("Arial", 18, "bold"), fg=COR_TEXTO, bg=COR_FUNDO,
-        ).pack(pady=(18, 4))
+            self.frame_conteudo, text="⚔  Quiz Cabo de Guerra  ⚔",
+            font=(FONTE, 19, "bold"), fg=COR_TEXTO, bg=COR_FUNDO,
+        ).pack(pady=(20, 6))
+
+        # Divisória sutil abaixo do título
+        tk.Frame(self.frame_conteudo, bg=COR_BORDA, height=1).pack(fill="x", padx=40)
 
         # Status
         self.rotulo_status = tk.Label(
-            self.janela, text="Clique em Conectar para começar",
-            font=("Arial", 11), fg=COR_STATUS, bg=COR_FUNDO,
+            self.frame_conteudo, text="Clique em Conectar para começar",
+            font=(FONTE, 11), fg=COR_STATUS, bg=COR_FUNDO,
         )
-        self.rotulo_status.pack(pady=(0, 10))
+        self.rotulo_status.pack(pady=(12, 10))
 
         # ── Barra cabo de guerra ──────────────────────────────────────────
-        frame_barra = tk.Frame(self.janela, bg=COR_FUNDO)
-        frame_barra.pack(fill="x", padx=30, pady=(0, 4))
+        frame_barra = tk.Frame(self.frame_conteudo, bg=COR_FUNDO)
+        frame_barra.pack(fill="x", padx=34, pady=(0, 4))
 
         # Nomes dos jogadores (preenchidos ao receber PERGUNTA/FIM_JOGO)
         self.rotulo_nome_a = tk.Label(
-            frame_barra, text="Você", font=("Arial", 10, "bold"),
+            frame_barra, text="Você", font=(FONTE, 10, "bold"),
             fg=COR_BARRA_A, bg=COR_FUNDO, width=12, anchor="w",
         )
         self.rotulo_nome_a.grid(row=0, column=0, sticky="w")
 
         self.rotulo_nome_b = tk.Label(
-            frame_barra, text="Adversário", font=("Arial", 10, "bold"),
+            frame_barra, text="Adversário", font=(FONTE, 10, "bold"),
             fg=COR_BARRA_B, bg=COR_FUNDO, width=12, anchor="e",
         )
         self.rotulo_nome_b.grid(row=0, column=2, sticky="e")
@@ -117,19 +132,19 @@ class JanelaQuiz:
 
         # Pontuações
         self.rotulo_pts_a = tk.Label(
-            frame_barra, text="0 pts", font=("Arial", 10),
+            frame_barra, text="0 pts", font=(FONTE, 10),
             fg=COR_BARRA_A, bg=COR_FUNDO, width=12, anchor="w",
         )
         self.rotulo_pts_a.grid(row=1, column=0, sticky="w")
 
         self.rotulo_rodada = tk.Label(
             frame_barra, text="Rodada — / 10",
-            font=("Arial", 10), fg=COR_STATUS, bg=COR_FUNDO,
+            font=(FONTE, 10), fg=COR_STATUS, bg=COR_FUNDO,
         )
         self.rotulo_rodada.grid(row=1, column=1)
 
         self.rotulo_pts_b = tk.Label(
-            frame_barra, text="0 pts", font=("Arial", 10),
+            frame_barra, text="0 pts", font=(FONTE, 10),
             fg=COR_BARRA_B, bg=COR_FUNDO, width=12, anchor="e",
         )
         self.rotulo_pts_b.grid(row=1, column=2, sticky="e")
@@ -140,45 +155,115 @@ class JanelaQuiz:
 
         # ── Pergunta ──────────────────────────────────────────────────────
         self.rotulo_pergunta = tk.Label(
-            self.janela, text="A pergunta aparecerá aqui quando a partida começar.",
+            self.frame_conteudo, text="A pergunta aparecerá aqui quando a partida começar.",
             wraplength=680, justify="center",
-            font=("Arial", 13, "bold"), fg=COR_PERGUNTA, bg=COR_FUNDO,
+            font=(FONTE, 13, "bold"), fg=COR_PERGUNTA, bg=COR_FUNDO,
         )
-        self.rotulo_pergunta.pack(pady=(14, 6), padx=20)
+        self.rotulo_pergunta.pack(pady=(16, 6), padx=20)
 
         # Tempo restante
         self.rotulo_tempo = tk.Label(
-            self.janela, text="",
-            font=("Arial", 12, "bold"), fg=COR_TEMPO, bg=COR_FUNDO,
+            self.frame_conteudo, text="",
+            font=(FONTE, 12, "bold"), fg=COR_TEMPO, bg=COR_FUNDO,
         )
-        self.rotulo_tempo.pack(pady=(0, 8))
+        self.rotulo_tempo.pack(pady=(0, 4))
+
+        # Barra de progresso do tempo restante
+        self.canvas_tempo = tk.Canvas(
+            self.frame_conteudo, width=300, height=8, bg=COR_FUNDO, highlightthickness=0,
+        )
+        self.canvas_tempo.pack(pady=(0, 12))
 
         # ── Opções ────────────────────────────────────────────────────────
         self.opcoes_var = tk.StringVar(self.janela, value="")
-        self.frame_opcoes = tk.Frame(self.janela, bg=COR_FUNDO)
-        self.frame_opcoes.pack(pady=(0, 12))
+        self.frame_opcoes = tk.Frame(self.frame_conteudo, bg=COR_FUNDO)
+        self.frame_opcoes.pack(pady=(0, 14))
         self._botoes_opcao: list[tk.Button] = []
 
         # ── Botões de ação ────────────────────────────────────────────────
-        frame_btns = tk.Frame(self.janela, bg=COR_FUNDO)
+        frame_btns = tk.Frame(self.frame_conteudo, bg=COR_FUNDO)
         frame_btns.pack(pady=(4, 0))
 
         self.botao_conectar = tk.Button(
             frame_btns, text="Conectar",
             command=self.conectar,
             bg=COR_BTN_CONN, fg="white", activebackground="#1d4ed8",
-            font=("Arial", 11, "bold"), width=16, height=2, relief="flat",
+            font=(FONTE, 11, "bold"), width=16, height=2, relief="flat",
+            cursor="hand2",
         )
         self.botao_conectar.grid(row=0, column=0, padx=10)
+        self._aplicar_efeito_hover(self.botao_conectar, COR_BTN_CONN, "#1e40af")
 
         self.botao_enviar = tk.Button(
             frame_btns, text="Enviar resposta",
             command=self.enviar_resposta,
             bg=COR_BTN_OFF, fg="#64748b", activebackground="#15803d",
-            font=("Arial", 11, "bold"), width=16, height=2, relief="flat",
-            state="disabled",
+            font=(FONTE, 11, "bold"), width=16, height=2, relief="flat",
+            state="disabled", cursor="hand2",
         )
         self.botao_enviar.grid(row=0, column=1, padx=10)
+        self._aplicar_efeito_hover(self.botao_enviar, COR_BTN_RESP, "#15803d")
+
+        # ── Histórico da partida ──────────────────────────────────────────
+        frame_historico = tk.Frame(self.frame_conteudo, bg=COR_FUNDO)
+        frame_historico.pack(pady=(18, 4), padx=24, fill="x")
+
+        tk.Label(
+            frame_historico, text="Histórico da partida",
+            font=(FONTE, 9, "bold"), fg=COR_STATUS, bg=COR_FUNDO,
+        ).pack(anchor="w")
+
+        self.texto_historico = tk.Text(
+            frame_historico, height=4, bg=COR_BORDA, fg=COR_TEXTO,
+            font=("Consolas", 9), relief="flat", state="disabled", wrap="word",
+            padx=8, pady=6,
+        )
+        self.texto_historico.pack(fill="x", pady=(4, 0))
+
+    def _centralizar_janela(self, largura: int, altura: int):
+        """Centraliza a janela na tela do usuário."""
+        self.janela.update_idletasks()
+        x = (self.janela.winfo_screenwidth() // 2) - (largura // 2)
+        y = (self.janela.winfo_screenheight() // 2) - (altura // 2)
+        self.janela.geometry(f"{largura}x{altura}+{x}+{y}")
+
+    def _aplicar_efeito_hover(self, botao: tk.Button, cor_normal: str, cor_hover: str):
+        """Realça um botão ao passar o mouse, somente enquanto ele estiver habilitado."""
+        def ao_entrar(_evento):
+            if str(botao["state"]) == "normal":
+                botao.config(bg=cor_hover)
+
+        def ao_sair(_evento):
+            if str(botao["state"]) == "normal":
+                botao.config(bg=cor_normal)
+
+        botao.bind("<Enter>", ao_entrar)
+        botao.bind("<Leave>", ao_sair)
+
+    def _configurar_atalhos_teclado(self):
+        """Permite escolher a opção com as teclas numéricas e enviar com Enter."""
+        self.janela.bind("<Return>", lambda _evento: self.enviar_resposta())
+        for numero in range(1, 10):
+            self.janela.bind(str(numero), self._selecionar_opcao_por_indice)
+
+    def _selecionar_opcao_por_indice(self, evento):
+        try:
+            indice = int(evento.char) - 1
+        except (TypeError, ValueError):
+            return
+        botoes = getattr(self, "_botoes_opcao", [])
+        if 0 <= indice < len(botoes) and str(botoes[indice]["state"]) == "normal":
+            self._selecionar_opcao(botoes[indice]["text"])
+
+    def _retangulo_arredondado(self, canvas: tk.Canvas, x1, y1, x2, y2, raio, **kwargs):
+        """Desenha (e retorna) um retângulo de cantos arredondados no canvas."""
+        raio = max(0, min(raio, (x2 - x1) / 2, (y2 - y1) / 2))
+        pontos = [
+            x1 + raio, y1, x2 - raio, y1, x2, y1, x2, y1 + raio,
+            x2, y2 - raio, x2, y2, x2 - raio, y2, x1 + raio, y2,
+            x1, y2, x1, y2 - raio, x1, y1 + raio, x1, y1,
+        ]
+        return canvas.create_polygon(pontos, smooth=True, **kwargs)
 
     # ── Barra visual ──────────────────────────────────────────────────────
 
@@ -197,8 +282,8 @@ class JanelaQuiz:
         W, H = 520, 40
         cx = W // 2   # centro fixo
 
-        # Fundo cinza (trilho)
-        c.create_rectangle(0, 8, W, H - 8, fill=COR_BARRA_NEU, outline="", tags="trilho")
+        # Fundo cinza (trilho), com cantos arredondados
+        self._retangulo_arredondado(c, 0, 8, W, H - 8, 8, fill=COR_BARRA_NEU, outline="", tags="trilho")
 
         # Fração da vantagem (-1.0 … +1.0), limitada ao intervalo válido
         frac = max(-1.0, min(1.0, posicao / LIMITE_BARRA))
@@ -206,11 +291,11 @@ class JanelaQuiz:
         if posicao > 0:
             # Jogador A na frente → marcador vai para a ESQUERDA, azul preenche à esquerda
             marcador_x = cx - int(frac * cx)
-            c.create_rectangle(0, 8, marcador_x, H - 8, fill=COR_BARRA_A, outline="")
+            self._retangulo_arredondado(c, 0, 8, marcador_x, H - 8, 8, fill=COR_BARRA_A, outline="")
         elif posicao < 0:
             # Jogador B na frente → marcador vai para a DIREITA, vermelho preenche à direita
             marcador_x = cx - int(frac * cx)   # frac negativo → marcador_x > cx
-            c.create_rectangle(marcador_x, 8, W, H - 8, fill=COR_BARRA_B, outline="")
+            self._retangulo_arredondado(c, marcador_x, 8, W, H - 8, 8, fill=COR_BARRA_B, outline="")
         else:
             marcador_x = cx
 
@@ -233,6 +318,7 @@ class JanelaQuiz:
 
     def _iniciar_contagem(self, segundos: int):
         self._parar_contagem()
+        self._segundos_totais = max(segundos, 1)
         self._segundos_restantes = segundos
         self._tick_contagem()
 
@@ -242,15 +328,30 @@ class JanelaQuiz:
                 text=f"⏱ Tempo: {self._segundos_restantes}s",
                 fg=COR_TEMPO if self._segundos_restantes > 5 else "#f87171",
             )
+            self._atualizar_barra_tempo(self._segundos_restantes / self._segundos_totais)
             self._segundos_restantes -= 1
             self._timer_contagem = self.janela.after(1000, self._tick_contagem)
         else:
             self.rotulo_tempo.config(text="⏱ Tempo esgotado!", fg="#f87171")
+            self._atualizar_barra_tempo(0)
 
     def _parar_contagem(self):
         if self._timer_contagem is not None:
             self.janela.after_cancel(self._timer_contagem)
             self._timer_contagem = None
+
+    def _atualizar_barra_tempo(self, fracao: float):
+        """Redesenha a barra de progresso do tempo restante (fração de 0.0 a 1.0)."""
+        canvas = getattr(self, "canvas_tempo", None)
+        if canvas is None:
+            return
+        largura_total = 300
+        canvas.delete("all")
+        self._retangulo_arredondado(canvas, 0, 0, largura_total, 8, 4, fill=COR_BORDA, outline="")
+        largura = max(0, int(largura_total * max(0.0, min(1.0, fracao))))
+        if largura > 0:
+            cor = "#22c55e" if fracao > 0.5 else ("#fbbf24" if fracao > 0.2 else "#ef4444")
+            self._retangulo_arredondado(canvas, 0, 0, largura, 8, 4, fill=cor, outline="")
 
     # ── Opções de resposta ────────────────────────────────────────────────
 
@@ -267,8 +368,8 @@ class JanelaQuiz:
                 command=lambda o=opcao: self._selecionar_opcao(o),
                 bg="#1e293b", fg=COR_TEXTO,
                 activebackground="#334155", activeforeground=COR_TEXTO,
-                font=("Arial", 11), width=30, height=1, relief="flat",
-                anchor="w", padx=10,
+                font=(FONTE, 11), width=30, height=1, relief="flat",
+                anchor="w", padx=10, cursor="hand2",
             )
             btn.pack(pady=3)
             self._botoes_opcao.append(btn)
@@ -424,6 +525,7 @@ class JanelaQuiz:
     def _on_fim_rodada(self, msg: dict):
         self._parar_contagem()
         self.rotulo_tempo.config(text="")
+        self._atualizar_barra_tempo(0)
         self.pergunta_atual = None
 
         vencedor          = msg.get("vencedor", "nenhum")
@@ -436,11 +538,13 @@ class JanelaQuiz:
 
         nome_venc = apelido_vencedor or vencedor
         if vencedor == self.id_jogador:
-            self._set_status(f"✅ Rodada {rodada}: você acertou primeiro! (resposta: {resposta_correta})")
+            linha = f"✅ Rodada {rodada}: você acertou primeiro! (resposta: {resposta_correta})"
         elif vencedor in (None, "nenhum"):
-            self._set_status(f"😐 Rodada {rodada}: ninguém acertou. Resposta certa: {resposta_correta}")
+            linha = f"😐 Rodada {rodada}: ninguém acertou. Resposta certa: {resposta_correta}"
         else:
-            self._set_status(f"❌ Rodada {rodada}: {nome_venc} acertou primeiro. Resposta certa: {resposta_correta}")
+            linha = f"❌ Rodada {rodada}: {nome_venc} acertou primeiro. Resposta certa: {resposta_correta}"
+        self._set_status(linha)
+        self._adicionar_historico(linha)
 
     def _destacar_resposta_correta(self, resposta_correta: str):
         """Pinta o botão da resposta certa de verde; a escolhida errada de vermelho."""
@@ -657,6 +761,14 @@ class JanelaQuiz:
         for btn in getattr(self, "_botoes_opcao", []):
             btn.destroy()
         self._botoes_opcao.clear()
+        self._atualizar_barra_tempo(0)
+
+        # Limpa o histórico da partida anterior
+        texto_historico = getattr(self, "texto_historico", None)
+        if texto_historico is not None:
+            texto_historico.config(state="normal")
+            texto_historico.delete("1.0", "end")
+            texto_historico.config(state="disabled")
 
         # Reconecta
         self.conectar()
@@ -665,6 +777,16 @@ class JanelaQuiz:
 
     def _set_status(self, texto: str):
         self.rotulo_status.config(text=texto)
+
+    def _adicionar_historico(self, texto: str):
+        """Acrescenta uma linha ao painel de histórico da partida, se ele existir."""
+        texto_historico = getattr(self, "texto_historico", None)
+        if texto_historico is None:
+            return
+        texto_historico.config(state="normal")
+        texto_historico.insert("end", f"{texto}\n")
+        texto_historico.see("end")
+        texto_historico.config(state="disabled")
 
     def _ao_fechar(self):
         self.janela.destroy()
