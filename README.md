@@ -57,6 +57,8 @@ Assim que os dois clientes clicarem em **Conectar**, a partida começa automatic
 - A barra vai de **−5 a +5**: quem atingir ±5 vence por knockout antes das 10 rodadas
 - Se terminar as 10 rodadas, vence quem estiver com a barra do seu lado (ou mais pontos em caso de empate)
 
+**Atalhos de teclado:** teclas `1`–`9` selecionam a opção correspondente e `Enter` envia a resposta.
+
 ---
 
 ## Protocolo de mensagens (9 tipos TCP + 1 UDP)
