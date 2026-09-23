@@ -36,6 +36,10 @@ Define **o que** pode ser dito na rede. Se você adicionar uma mensagem nova:
 2. Documente os campos no docstring do topo do arquivo **e** no `PROTOCOLO.md`.
 3. Trate-a no servidor (`processar_mensagem`) e/ou no cliente (dispatcher).
 
+O módulo também define `TAMANHO_MAXIMO_MENSAGEM` (256 KB) — o limite de
+payload aceito por `decodificar_mensagem`/`_processar_buffer_cliente`, para
+evitar que um cabeçalho forjado ou mensagem gigante esgote a memória.
+
 ### Camada 2 — Regras do jogo (`game_logic.py`)
 `EstadoJogo` guarda o estado de uma partida (barra, placar, rodada, vencedor).
 Métodos-chave:
@@ -106,7 +110,9 @@ Estas partes são delicadas por causa de concorrência (threads):
 - **`_processar_buffer_cliente`** — o parser de framing TCP. Já trata rajada,
   fragmentação e lixo. Mexer aqui pode reintroduzir perda de mensagens.
 - **`processar_mensagens_de_conexao`** — o loop de recepção por conexão. Roda
-  em thread própria e trata desconexão no final.
+  em thread própria e trata desconexão no final. Sockets aceitos recebem um
+  timeout de leitura de 60s (`_ativar_timeout_leitura`) para não prender a
+  thread indefinidamente numa conexão parada/half-open.
 - **Os `threading.Timer`** (`_agendar_timeout_rodada`, `_agendar_timeout_espera`,
   o timer de próxima rodada) — sempre cancele o antigo antes de criar um novo,
   senão vazam timers.

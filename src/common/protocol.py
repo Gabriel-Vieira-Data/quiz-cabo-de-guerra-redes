@@ -89,6 +89,10 @@ VALORES ESPECIAIS que o frontend precisa tratar
 import json
 from enum import Enum
 
+# Limite de tamanho de uma mensagem (payload JSON), em bytes. Protege contra
+# cabeçalhos forjados e mensagens gigantes que esgotariam a memória do servidor.
+TAMANHO_MAXIMO_MENSAGEM = 256 * 1024  # 256 KB — generoso para qualquer mensagem real do jogo
+
 
 class TipoMensagem(str, Enum):
     """
@@ -141,18 +145,24 @@ def decodificar_mensagem(mensagem_bruta: bytes | str) -> dict:
     ou bytes), o que dá flexibilidade para testes e para o canal UDP.
     """
     if isinstance(mensagem_bruta, bytes):
-        # Se parece ter cabeçalho de 4 bytes, remove-o antes de decodificar
+        # Se parece ter cabeçalho de 4 bytes, remove-o antes de decodificar.
+        # Ambíguo por natureza (JSON puro também pode começar com bytes que
+        # parecem um tamanho grande), então só confia no cabeçalho quando o
+        # conteúdo apontado por ele realmente parece um objeto JSON.
         if len(mensagem_bruta) >= 4:
             try:
                 tamanho = int.from_bytes(mensagem_bruta[:4], byteorder="big", signed=False)
-                if tamanho > 0 and len(mensagem_bruta) >= 4 + tamanho:
+                if 0 < tamanho <= TAMANHO_MAXIMO_MENSAGEM and len(mensagem_bruta) >= 4 + tamanho:
                     payload = mensagem_bruta[4 : 4 + tamanho]
                     if payload.strip().startswith(b"{"):
                         mensagem_bruta = payload
             except (OverflowError, ValueError):
                 pass
         mensagem_bruta = mensagem_bruta.decode("utf-8")
-    return json.loads(mensagem_bruta)
+    try:
+        return json.loads(mensagem_bruta)
+    except json.JSONDecodeError as erro:
+        raise ValueError(f"Mensagem JSON inválida: {erro}") from erro
 
 
 

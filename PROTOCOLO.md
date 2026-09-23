@@ -40,6 +40,10 @@ Datagramas JSON puros, **sem** o cabeçalho de 4 bytes. Usado só para medir pin
 > **Importante:** o servidor valida `RESPOSTA` contra o socket que enviou
 > (anti-trapaça). Envie sempre o `id_jogador` que você recebeu no `BEM_VINDO`.
 
+**Limites de validação (defesa contra abuso):** o servidor trunca `id_jogador`
+para 50 caracteres e `apelido` para 100 caracteres. Mensagens (payload JSON)
+acima de 256 KB (`TAMANHO_MAXIMO_MENSAGEM` em `protocol.py`) são rejeitadas.
+
 ---
 
 ## 3. Mensagens que o CLIENTE RECEBE

@@ -23,7 +23,13 @@ from typing import Dict
 
 from src.common.banco_perguntas import BancoPerguntas
 from src.common.game_logic import EstadoJogo, resolverResultadoRodada
-from src.common.protocol import TipoMensagem, codificar_mensagem, criar_mensagem, decodificar_mensagem
+from src.common.protocol import (
+    TAMANHO_MAXIMO_MENSAGEM,
+    TipoMensagem,
+    codificar_mensagem,
+    criar_mensagem,
+    decodificar_mensagem,
+)
 
 
 class _EstadoJogoProxy(dict):
@@ -286,6 +292,10 @@ class ServidorQuiz:
         apelido = mensagem.get("apelido", id_jogador)
         if not id_jogador:
             return None
+
+        # Limita o tamanho de campos vindos do cliente (defesa contra abuso/DoS).
+        id_jogador = str(id_jogador)[:50]
+        apelido = str(apelido)[:100] if apelido else apelido
 
         # O servidor é a autoridade sobre o id: pode renomear em caso de colisão.
         id_jogador = self._gerar_id_jogador_disponivel(id_jogador)
@@ -741,7 +751,7 @@ class ServidorQuiz:
                 break  # cabeçalho incompleto — aguarda mais bytes
 
             tamanho = int.from_bytes(buffer[:4], byteorder="big", signed=False)
-            if tamanho <= 0 or tamanho > 10 * 1024 * 1024:
+            if tamanho <= 0 or tamanho > TAMANHO_MAXIMO_MENSAGEM:
                 # Cabeçalho inválido (0 ou absurdamente grande): descarta 1 byte
                 # e tenta ressincronizar.
                 buffer = buffer[1:]
@@ -864,8 +874,19 @@ class ServidorQuiz:
             # ponta periodicamente e detecta conexões "mortas" (half-open) mesmo
             # quando nenhum dado está sendo trocado.
             self._ativar_keepalive(conexao)
+            # Timeout de leitura: evita que uma conexão parada (half-open ou
+            # cliente travado) prenda a thread do servidor indefinidamente.
+            self._ativar_timeout_leitura(conexao)
             thread = threading.Thread(target=self.escutar_cliente, args=(conexao,), daemon=True)
             thread.start()
+
+    @staticmethod
+    def _ativar_timeout_leitura(sock, segundos: float = 60):
+        """Define um timeout de recv() no socket, se suportado (sockets fake em testes não têm)."""
+        try:
+            sock.settimeout(segundos)
+        except (OSError, AttributeError):
+            pass
 
     @staticmethod
     def _ativar_keepalive(sock):
