@@ -1,50 +1,48 @@
+# [Origem: IA 89% · autoral 11%] Medido com git blame (ver USO_DE_IA.md).
 import threading
-import time
 
 from src.client.client import ClienteQuiz
 from src.server.server import ServidorQuiz
 
 
-def test_cliente_recebe_pergunta_e_envia_resposta():
+def _esperar_tipo(cliente, tipo):
+    """Lê mensagens até chegar uma do tipo pedido (ou a conexão fechar/dar timeout)."""
+    mensagem = cliente.receber_mensagem()
+    while mensagem is not None and mensagem.get("tipo") != tipo:
+        mensagem = cliente.receber_mensagem()
+    return mensagem
+
+
+def test_dois_clientes_recebem_pergunta_respondem_e_recebem_resultado():
+    """Fluxo real por TCP: ENTRAR → PERGUNTA → RESPOSTA → FIM_RODADA."""
     servidor = ServidorQuiz(porta_tcp=5020, porta_udp=5021)
     servidor.iniciar_servidor_tcp()
+    threading.Thread(target=servidor.aceitar_conexoes, daemon=True).start()
 
-    thread_servidor = threading.Thread(target=servidor.aceitar_conexoes, daemon=True)
-    thread_servidor.start()
+    alice = ClienteQuiz(porta_tcp=5020, porta_udp=5021)
+    bob = ClienteQuiz(porta_tcp=5020, porta_udp=5021)
+    try:
+        for cliente, id_jogador, apelido in ((alice, "player-1", "Alice"), (bob, "player-2", "Bob")):
+            cliente.conectar()
+            cliente.socket_tcp.settimeout(3)   # não trava o teste se algo der errado
+            cliente.enviar_entrada(id_jogador, apelido)
 
-    cliente = ClienteQuiz(porta_tcp=5020, porta_udp=5021)
-    cliente.conectar()
-    cliente.enviar_entrada("player-1", "Alice")
+        pergunta_alice = _esperar_tipo(alice, "PERGUNTA")
+        pergunta_bob = _esperar_tipo(bob, "PERGUNTA")
+        assert pergunta_alice is not None and pergunta_bob is not None
+        assert pergunta_alice["pergunta"] == pergunta_bob["pergunta"]
+        assert "resposta_correta" not in pergunta_alice   # gabarito não vai ao cliente
 
-    time.sleep(0.2)
+        certa = servidor.perguntas_rodada["sala-1"]["resposta_correta"]
+        errada = next(op for op in pergunta_alice["opcoes"] if op != certa)
+        alice.enviar_resposta("player-1", pergunta_alice["rodada_id"], certa)
+        bob.enviar_resposta("player-2", pergunta_bob["rodada_id"], errada)
 
-    servidor.lidar_com_pergunta({
-        "rodada_id": 1,
-        "pergunta": "Qual protocolo é orientado à conexão?",
-        "opcoes": ["TCP", "UDP", "ICMP", "ARP"],
-        "tempo_limite": 10,
-    })
-
-    # O servidor envia BEM_VINDO (ACK de ENTRAR) antes da PERGUNTA.
-    # Pulamos mensagens até chegar na PERGUNTA.
-    mensagem = cliente.receber_mensagem()
-    while mensagem is not None and mensagem.get("tipo") != "PERGUNTA":
-        mensagem = cliente.receber_mensagem()
-
-    assert mensagem is not None
-    assert mensagem["tipo"] == "PERGUNTA"
-    assert mensagem["pergunta"] == "Qual protocolo é orientado à conexão?"
-
-    cliente.enviar_resposta("player-1", 1, "TCP")
-    resultado = servidor.processar_resposta(
-        jogador_a="player-1",
-        jogador_b="player-2",
-        resposta_a="TCP",
-        resposta_b="UDP",
-        resposta_correta="TCP",
-    )
-
-    assert resultado["vencedor"] == "player-1"
-
-    cliente.socket_tcp.close()
-    servidor.fechar_servidor()
+        fim_rodada = _esperar_tipo(alice, "FIM_RODADA")
+        assert fim_rodada is not None
+        assert fim_rodada["vencedor"] == "player-1"
+        assert fim_rodada["resposta_correta"] == certa
+    finally:
+        alice.fechar()
+        bob.fechar()
+        servidor.fechar_servidor()

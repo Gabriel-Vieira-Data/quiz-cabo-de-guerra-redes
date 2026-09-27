@@ -13,6 +13,13 @@ Fluxo de uma partida:
   3. Servidor envia FIM_RODADA + ATUALIZAR_BARRA
   4. Se o jogo terminou → envia FIM_JOGO; senão avança para próxima PERGUNTA
   5. Timeout de rodada é gerenciado por threading.Timer em background
+
+Marcação de origem (ver USO_DE_IA.md):
+  Cada classe/função tem acima um comentário "# [Origem: ...]", medido com
+  git blame: "IA" = escrito com auxílio de IA; "autoral" = escrito pelos
+  integrantes sem IA. Funções mistas mostram a
+  porcentagem de cada origem. Trechos da base inicial que foram gerados com
+  IA estão marcados também com "# [IA - base inicial]".
 """
 import json
 import re
@@ -22,7 +29,7 @@ import time
 from typing import Dict
 
 from src.common.banco_perguntas import BancoPerguntas
-from src.common.game_logic import EstadoJogo, resolverResultadoRodada
+from src.common.game_logic import EstadoJogo
 from src.common.protocol import (
     TAMANHO_MAXIMO_MENSAGEM,
     TipoMensagem,
@@ -32,46 +39,19 @@ from src.common.protocol import (
 )
 
 
-class _EstadoJogoProxy(dict):
-    """
-    Dicionário proxy que mantém sincronizado com um EstadoJogo.
-    Garante retrocompatibilidade com testes que acessam servidor.estado_jogo["pontuacao"] etc.
-    """
-
-    def __init__(self, estado: EstadoJogo):
-        super().__init__(
-            posicao_barra=estado.posicao_barra,
-            rodada=estado.rodada_atual,
-            maximo_rodadas=estado.maximo_rodadas,
-            pontuacao=estado.pontuacao_jogadores,
-            vencedor=estado.vencedor,
-        )
-        self._estado = estado
-
-    def _sync(self):
-        self["posicao_barra"] = self._estado.posicao_barra
-        self["rodada"] = self._estado.rodada_atual
-        self["pontuacao"] = self._estado.pontuacao_jogadores
-        self["vencedor"] = self._estado.vencedor
-
-    def __setitem__(self, key, value):
-        super().__setitem__(key, value)
-        if key == "posicao_barra" and hasattr(self, "_estado"):
-            self._estado.posicao_barra = value
-        elif key == "vencedor" and hasattr(self, "_estado"):
-            self._estado.vencedor = value
-
-    def __getitem__(self, key):
-        if hasattr(self, "_estado"):
-            self._sync()
-        return super().__getitem__(key)
-
-
+# [Origem: IA 90% · autoral 10%]
 class ServidorQuiz:
+    # [Origem: autoral 57% · IA 43%]
     def __init__(self, host: str = "0.0.0.0", porta_tcp: int = 5000, porta_udp: int = 5001):
         self.host = host
         self.porta_tcp = porta_tcp
         self.porta_udp = porta_udp
+        # [IA - base inicial] Trava REENTRANTE compartilhada por todas as threads.
+        # Várias threads (uma por cliente, o timer de rodada, a de UDP) mexem nos
+        # mesmos dicionários; o lock garante que só uma por vez altere o estado.
+        # É RLock (e não Lock) porque funções protegidas chamam outras funções
+        # que também fazem "with self._lock" — com Lock comum a própria thread
+        # ficaria travada esperando por ela mesma (deadlock).
         self._lock = threading.RLock()
 
         # Conexões e fila
@@ -98,18 +78,26 @@ class ServidorQuiz:
         self.banco_perguntas = BancoPerguntas()
         self.tempo_limite_rodada = 30
 
-        # Estado global legado (proxy do primeiro EstadoJogo ativo)
-        self._estado_global = EstadoJogo()
-        self.estado_jogo = _EstadoJogoProxy(self._estado_global)
-
-        self.ultimo_ping = None
         self._servidor_ativo = False
 
     # -----------------------------------------------------------------------
     # Identificação de jogadores
     # -----------------------------------------------------------------------
 
+    # [Origem: IA]
+    # [IA - base inicial] Função inteira gerada com IA.
     def _gerar_id_jogador_disponivel(self, identificador_jogador: str | None) -> str:
+        """
+        Garante que cada jogador tenha um id único no servidor.
+
+        Se o id pedido já está em uso (ex.: dois clientes pedindo "player-1"),
+        gera "player-2", "player-3"... A regex separa o nome do número final:
+          "player-1" → nome "player", número 1
+          "alice"    → nome "alice",  sem número (começa do 1)
+        "(.+?)" pega o nome (o "?" o torna preguiçoso, para não engolir o
+        número) e "-?(\\d+)?" pega um hífen e um número opcionais no fim.
+        Se nenhum dos 1000 candidatos estiver livre, usa o horário em ms.
+        """
         base = str(identificador_jogador).strip() if identificador_jogador else "player"
         if not base:
             base = "player"
@@ -132,20 +120,21 @@ class ServidorQuiz:
     # Fila de espera e criação de sala
     # -----------------------------------------------------------------------
 
+    # [Origem: autoral 75% · IA 25%]
     def adicionar_jogador_espera(self, id_jogador: str):
         with self._lock:
             if id_jogador not in self.fila_espera:
                 self.fila_espera.append(id_jogador)
 
+    # [Origem: autoral 59% · IA 41%]
     def criar_sala_para_espera(self) -> dict | None:
         with self._lock:
+            # Só forma uma sala quando há PELO MENOS 2 jogadores NA FILA, e
+            # sempre com uma sala nova: um jogador sozinho nunca inicia partida.
             if len(self.fila_espera) < 2:
-                # Fila insuficiente — se já existe sala-1 apenas recria os dados legados
-                if self.salas:
-                    return list(self.salas.values())[0]
                 return None
 
-            # Remove sala anterior (se existir) sem desconectar jogadores ativos
+            # Remove qualquer sala anterior (sem desconectar jogadores ativos).
             for codigo_sala in list(self.salas.keys()):
                 self._limpar_sala(codigo_sala)
 
@@ -162,6 +151,7 @@ class ServidorQuiz:
             self.perguntas_usadas_por_sala[codigo_sala] = set()
             return self.salas[codigo_sala]
 
+    # [Origem: IA]
     def _limpar_sala(self, codigo_sala: str):
         self._cancelar_timer_timeout(codigo_sala)
         self.salas.pop(codigo_sala, None)
@@ -171,21 +161,11 @@ class ServidorQuiz:
         self.perguntas_rodada.pop(codigo_sala, None)
         self.perguntas_usadas_por_sala.pop(codigo_sala, None)
 
-    def criar_sala(self, codigo_sala: str):
-        """Compatibilidade com testes legados."""
-        jogadores_da_sala = [j for j in self.jogadores_conectados if j in {"player-1", "player-2"}]
-        self.salas[codigo_sala] = {
-            "codigo": codigo_sala,
-            "jogadores": jogadores_da_sala,
-            "estado": "esperando",
-            "rodada_atual": 1,
-        }
-        return self.salas[codigo_sala]
-
     # -----------------------------------------------------------------------
     # Início de partida
     # -----------------------------------------------------------------------
 
+    # [Origem: autoral 71% · IA 29%]
     def iniciar_partida_em_sala(self, codigo_sala: str) -> dict:
         with self._lock:
             sala = self.salas.get(codigo_sala)
@@ -200,10 +180,6 @@ class ServidorQuiz:
 
             estado = EstadoJogo(jogador_a=jogador_a, jogador_b=jogador_b)
             self.estado_por_sala[codigo_sala] = estado
-
-            # Atualiza o proxy global para refletir este estado
-            self._estado_global = estado
-            self.estado_jogo = _EstadoJogoProxy(estado)
 
             partida = {
                 "codigo": codigo_sala,
@@ -220,7 +196,9 @@ class ServidorQuiz:
     # Perguntas
     # -----------------------------------------------------------------------
 
-    def selecionar_pergunta_para_sala(self, codigo_sala: str, esperar_dois_jogadores: bool | None = None) -> dict:
+    # [Origem: IA]
+    def selecionar_pergunta_para_sala(self, codigo_sala: str) -> dict:
+        """Sorteia uma pergunta ainda não usada na sala e zera o estado da rodada."""
         with self._lock:
             todas = self.banco_perguntas.obter_perguntas()
             if not todas:
@@ -233,13 +211,20 @@ class ServidorQuiz:
                 self.perguntas_usadas_por_sala[codigo_sala] = set()
 
             import random
-            pergunta = random.choice(disponiveis)
+            original = random.choice(disponiveis)
+            # Cópia com as opções embaralhadas: no banco a resposta certa costuma
+            # ser a 1ª opção. A correção compara pelo TEXTO (resposta_correta),
+            # então a ordem não afeta a validação. O banco original não é alterado.
+            opcoes = list(original["opcoes"])
+            random.shuffle(opcoes)
+            pergunta = {**original, "opcoes": opcoes}
             self.perguntas_usadas_por_sala.setdefault(codigo_sala, set()).add(pergunta["pergunta"])
             self.perguntas_rodada[codigo_sala] = pergunta
 
-            # Determina modo de espera: se não especificado, usa presença de partida ativa
-            if esperar_dois_jogadores is None:
-                esperar_dois_jogadores = codigo_sala in self.partidas_ativas
+            # Descobre o número da rodada atual (a partir do EstadoJogo da sala).
+            # É usado para validar que uma RESPOSTA pertence à rodada corrente.
+            estado_jogo_sala = self.estado_por_sala.get(codigo_sala)
+            numero_rodada = estado_jogo_sala.rodada_atual if estado_jogo_sala else 1
 
             # Reinicia o estado da rodada
             self.rodadas_por_sala[codigo_sala] = {
@@ -247,10 +232,11 @@ class ServidorQuiz:
                 "respostas": {},
                 "vencedor": None,
                 "concluida": False,
-                "modo_espera_dupla": esperar_dois_jogadores,
+                "rodada_id": numero_rodada,
             }
             return pergunta
 
+    # [Origem: IA]
     def enviar_pergunta_para_sala(self, codigo_sala: str, payload: dict):
         sala = self.salas.get(codigo_sala)
         if not sala:
@@ -264,6 +250,7 @@ class ServidorQuiz:
     # Processamento de mensagens recebidas dos clientes
     # -----------------------------------------------------------------------
 
+    # [Origem: IA]
     def processar_mensagem(self, mensagem: dict, socket_remetente: socket.socket | None = None):
         with self._lock:
             if not mensagem:
@@ -279,13 +266,14 @@ class ServidorQuiz:
 
             return mensagem
 
+    # [Origem: IA]
     def _handle_entrar(self, mensagem: dict, socket_remetente):
         """
         Trata a mensagem ENTRAR de um cliente:
           1. Resolve um id único (renomeia se houver colisão).
           2. Associa o socket ao id (para o anti-trapaça) e guarda o apelido.
           3. Envia BEM_VINDO ao cliente com o id DEFINITIVO — isso é essencial
-             para o frontend conseguir se identificar no placar depois.
+             para o cliente conseguir se identificar no placar depois.
           4. Coloca na fila; se já houver 2 jogadores, inicia a partida.
         """
         id_jogador = mensagem.get("id_jogador")
@@ -295,25 +283,39 @@ class ServidorQuiz:
 
         # Limita o tamanho de campos vindos do cliente (defesa contra abuso/DoS).
         id_jogador = str(id_jogador)[:50]
-        apelido = str(apelido)[:100] if apelido else apelido
+        # Apelido: máx. 20 caracteres (mesmo limite validado na interface).
+        apelido = str(apelido).strip()[:20] if apelido else apelido
 
-        # O servidor é a autoridade sobre o id: pode renomear em caso de colisão.
-        id_jogador = self._gerar_id_jogador_disponivel(id_jogador)
-
+        # ── Reentrada na MESMA conexão (ex.: "Jogar novamente") ──────────────
+        # Se este socket já está associado a um jogador, é uma REENTRADA: o
+        # cliente quer uma nova partida sem reconectar. Reusamos o MESMO id
+        # (sem renomear) e apenas o recolocamos na fila. Isso evita tratar a
+        # reentrada como um jogador novo (que geraria player-1-1, etc.).
+        id_existente = None
         if socket_remetente is not None:
-            self.jogadores_conectados[id_jogador] = socket_remetente
-            # Mapeia o socket → id para validar respostas (anti-trapaça).
-            self.socket_para_jogador[id(socket_remetente)] = id_jogador
+            id_existente = self.socket_para_jogador.get(id(socket_remetente))
 
-        # Guarda o apelido exibível (fallback para o próprio id).
-        self.apelidos[id_jogador] = apelido or id_jogador
+        if id_existente is not None:
+            id_jogador = id_existente
+            # Atualiza o apelido caso o jogador tenha trocado.
+            if apelido:
+                self.apelidos[id_jogador] = apelido
+        else:
+            # Jogador novo: o servidor é a autoridade sobre o id (renomeia em colisão).
+            id_jogador = self._gerar_id_jogador_disponivel(id_jogador)
+            if socket_remetente is not None:
+                self.jogadores_conectados[id_jogador] = socket_remetente
+                # Mapeia o socket → id para validar respostas (anti-trapaça).
+                self.socket_para_jogador[id(socket_remetente)] = id_jogador
+            # Guarda o apelido exibível (fallback para o próprio id).
+            self.apelidos[id_jogador] = apelido or id_jogador
 
         self.adicionar_jogador_espera(id_jogador)
         sala = self.criar_sala_para_espera()
         em_partida = sala is not None and len(sala.get("jogadores", [])) == 2
 
         # ACK de ENTRAR: informa ao cliente seu id definitivo e o estado atual.
-        # Sem isso, o frontend não saberia se foi renomeado nem se já está jogando.
+        # Sem isso, o cliente não saberia se foi renomeado nem se já está jogando.
         if socket_remetente is not None:
             self._enviar_mensagem_socket(
                 socket_remetente,
@@ -339,6 +341,7 @@ class ServidorQuiz:
 
         return None
 
+    # [Origem: IA]
     def _agendar_timeout_espera(self, id_jogador: str, sock):
         """Avisa o jogador se ninguém entrar dentro do tempo limite de espera."""
         def _expirou():
@@ -363,11 +366,13 @@ class ServidorQuiz:
         timer.start()
         self._timers_espera[id_jogador] = timer
 
+    # [Origem: IA]
     def _cancelar_timers_espera(self):
         for timer in self._timers_espera.values():
             timer.cancel()
         self._timers_espera.clear()
 
+    # [Origem: IA]
     def _handle_resposta(self, mensagem: dict, socket_remetente=None):
         id_jogador = mensagem.get("id_jogador")
         rodada_id = mensagem.get("rodada_id", 1)
@@ -398,36 +403,56 @@ class ServidorQuiz:
     # Lógica central de rodada
     # -----------------------------------------------------------------------
 
+    # [Origem: IA]
+    def _apelidos_e_placar_da_sala(self, codigo_sala: str):
+        """Retorna (apelidos, pontuacao, posicao) da sala para incluir nos payloads."""
+        estado = self.estado_por_sala.get(codigo_sala)
+        sala = self.salas.get(codigo_sala, {})
+        jogadores = sala.get("jogadores", [])
+        apelidos = {jid: self.apelidos.get(jid, jid) for jid in jogadores}
+        pontuacao = estado.pontuacao_jogadores.copy() if estado else {jid: 0 for jid in jogadores}
+        posicao = estado.posicao_barra if estado else 0
+        return apelidos, pontuacao, posicao
+
+    # [Origem: IA]
     def _iniciar_primeira_rodada(self, codigo_sala: str):
+        """Sorteia a 1ª pergunta, envia PERGUNTA aos dois jogadores e liga o timer da rodada."""
         pergunta = self.selecionar_pergunta_para_sala(codigo_sala)
         estado = self.estado_por_sala.get(codigo_sala)
         rodada_id = estado.rodada_atual if estado else 1
+        apelidos, pontuacao, posicao = self._apelidos_e_placar_da_sala(codigo_sala)
         # NÃO envia resposta_correta ao cliente — a validação é só no servidor.
+        # Inclui apelidos/pontuacao para o cliente exibir os nomes já na 1ª rodada.
         payload = {
             "rodada_id": rodada_id,
             "pergunta": pergunta["pergunta"],
             "opcoes": pergunta["opcoes"],
             "tempo_limite": self.tempo_limite_rodada,
+            "apelidos": apelidos,
+            "pontuacao": pontuacao,
+            "posicao": posicao,
         }
         self.enviar_pergunta_para_sala(codigo_sala, payload)
         self._agendar_timeout_rodada(codigo_sala)
 
-    def registrar_jogador(self, identificador_jogador: str, socket_jogador) -> dict | None:
-        """API de compatibilidade usada por testes e scripts de demo."""
-        with self._lock:
-            identificador_jogador = self._gerar_id_jogador_disponivel(identificador_jogador)
-            self.jogadores_conectados[identificador_jogador] = socket_jogador
-
-            self.adicionar_jogador_espera(identificador_jogador)
-            sala = self.criar_sala_para_espera()
-            if sala is not None and len(sala.get("jogadores", [])) == 2:
-                self.iniciar_partida_em_sala(sala["codigo"])
-                self._iniciar_primeira_rodada(sala["codigo"])
-            return sala
-
+    # [Origem: IA]
     def registrar_resposta_jogador(
         self, codigo_sala: str, rodada_id: int, id_jogador: str, resposta: str
     ):
+        """
+        Registra a RESPOSTA de um jogador e, se possível, resolve a rodada.
+
+        Passos:
+          1. Descarta respostas inválidas: sala/rodada inexistente, rodada já
+             concluída, rodada_id diferente do atual (resposta atrasada) ou
+             segunda resposta do mesmo jogador.
+          2. Guarda a resposta com o horário de chegada.
+          3. Quando os dois responderam, vence quem ACERTOU PRIMEIRO
+             (menor horário entre as respostas corretas).
+          4. Envia os resultados FORA do lock (ver _resolver_rodada).
+
+        Retorna None enquanto a rodada não foi resolvida, ou um dict com o vencedor.
+        """
         with self._lock:
             sala = self.salas.get(codigo_sala)
             if not sala:
@@ -440,86 +465,56 @@ class ServidorQuiz:
             if estado_rodada.get("concluida"):
                 return None
 
+            # Ignorar resposta de uma rodada que não é a atual.
+            # Sem isso, uma resposta atrasada da rodada anterior (por latência de
+            # rede) seria contada na rodada nova — o jogador "responderia" a
+            # pergunta atual sem tê-la visto, roubando a vitória da rodada.
+            # rodada_id pode vir como str ou int; comparamos de forma tolerante.
+            rodada_corrente = estado_rodada.get("rodada_id")
+            if rodada_corrente is not None and rodada_id is not None:
+                try:
+                    if int(rodada_id) != int(rodada_corrente):
+                        return None
+                except (TypeError, ValueError):
+                    pass
+
             # Ignorar resposta duplicada do mesmo jogador
             if id_jogador in estado_rodada["respostas"]:
                 return None
 
-            # Verificar timeout
-            if time.time() - estado_rodada["inicio"] > self.tempo_limite_rodada:
+            # Resposta chegou depois do tempo limite: não conta, e a rodada
+            # termina como num timeout normal (quem já tinha acertado pontua).
+            expirou = time.time() - estado_rodada["inicio"] > self.tempo_limite_rodada
+
+            if not expirou:
+                # Registrar resposta com o horário de chegada
+                estado_rodada["respostas"][id_jogador] = {
+                    "resposta": str(resposta).strip().upper(),
+                    "tempo": time.time(),
+                }
+
+                # Ainda falta alguém responder: espera (ou o timer da rodada).
+                if len(estado_rodada["respostas"]) < len(sala["jogadores"]):
+                    return None
+
+                # Todos responderam: vence quem acertou primeiro.
                 estado_rodada["concluida"] = True
                 self._cancelar_timer_timeout(codigo_sala)
-                # Sai do lock antes de resolver para evitar deadlock
-                deve_resolver_timeout = True
-            else:
-                deve_resolver_timeout = False
-
-            if deve_resolver_timeout:
-                pass  # handled below after lock release
-
-        if deve_resolver_timeout:
-            self._resolver_rodada(codigo_sala, vencedor=None)
-            return {"vencedor": "nenhum", "delta_barra": 0, "direcao_barra": 0}
-
-        with self._lock:
-
-            # Registrar resposta com timestamp
-            estado_rodada["respostas"][id_jogador] = {
-                "resposta": str(resposta).strip().upper(),
-                "tempo": time.time(),
-            }
-
-            pergunta = self.perguntas_rodada.get(codigo_sala, {})
-            resposta_correta = str(pergunta.get("resposta_correta", "")).strip().upper()
-
-            modo_espera_dupla = estado_rodada.get("modo_espera_dupla", True)
-
-            # Resolve imediatamente se:
-            # - Não está no modo de espera dupla (partida sem estado ativo), OU
-            # - Todos os jogadores da sala já responderam
-            n_jogadores = len(sala["jogadores"])
-            todos_responderam = len(estado_rodada["respostas"]) >= n_jogadores
-
-            if not modo_espera_dupla or todos_responderam:
-                estado_rodada["concluida"] = True
-                self._cancelar_timer_timeout(codigo_sala)
-
-                respostas_certas = [
-                    jid for jid, dados in estado_rodada["respostas"].items()
-                    if dados["resposta"] == resposta_correta
-                ]
-
-                if respostas_certas:
-                    vencedor = min(
-                        respostas_certas,
-                        key=lambda jid: estado_rodada["respostas"][jid]["tempo"],
-                    )
-                else:
-                    vencedor = None
-
-                # Atualiza estado do jogo enquanto ainda temos o lock
+                vencedor = self._vencedor_pelas_respostas(codigo_sala)
                 estado = self.estado_por_sala.get(codigo_sala)
                 if estado and vencedor:
                     estado.registrarResultadoRodada(vencedor)
-                    self.estado_jogo._sync()
-                elif not estado and vencedor:
-                    self.estado_jogo["pontuacao"][vencedor] = (
-                        self.estado_jogo["pontuacao"].get(vencedor, 0) + 1
-                    )
 
-                deve_resolver = modo_espera_dupla
-                resultado = {"vencedor": vencedor or "nenhum"}
-
-            else:
-                # Aguardando o(s) outro(s) jogador(es) responder
-                return None
+        if expirou:
+            self._cancelar_timer_timeout(codigo_sala)
+            return self._timeout_rodada(codigo_sala)
 
         # _resolver_rodada é chamado FORA do lock para evitar deadlock
         # ao fazer sendall enquanto outra thread aguarda o lock
-        if deve_resolver:
-            self._resolver_rodada(codigo_sala, vencedor=vencedor)
+        self._resolver_rodada(codigo_sala, vencedor=vencedor)
+        return {"vencedor": vencedor or "nenhum"}
 
-        return resultado
-
+    # [Origem: IA]
     def _resolver_rodada(self, codigo_sala: str, vencedor: str | None):
         """
         Atualiza o EstadoJogo, envia FIM_RODADA + ATUALIZAR_BARRA,
@@ -532,8 +527,8 @@ class ServidorQuiz:
         pergunta = self.perguntas_rodada.get(codigo_sala, {})
         resposta_correta = pergunta.get("resposta_correta", "")
 
-        # Envia FIM_RODADA — agora inclui a resposta correta (o jogo já resolveu)
-        # e o apelido do vencedor, para o cliente exibir feedback educativo.
+        # Envia FIM_RODADA com a resposta correta (só revelada depois que a
+        # rodada acabou) e o apelido do vencedor, para o cliente mostrar o resultado.
         self.transmitir_para_sala(
             codigo_sala,
             TipoMensagem.FIM_RODADA,
@@ -574,6 +569,7 @@ class ServidorQuiz:
         timer.daemon = True
         timer.start()
 
+    # [Origem: IA]
     def _iniciar_proxima_rodada(self, codigo_sala: str):
         with self._lock:
             sala = self.salas.get(codigo_sala)
@@ -590,17 +586,22 @@ class ServidorQuiz:
             sala["rodada_atual"] = estado.rodada_atual
 
             pergunta = self.selecionar_pergunta_para_sala(codigo_sala)
+            apelidos, pontuacao, posicao = self._apelidos_e_placar_da_sala(codigo_sala)
             # NÃO envia resposta_correta ao cliente.
             payload = {
                 "rodada_id": estado.rodada_atual,
                 "pergunta": pergunta["pergunta"],
                 "opcoes": pergunta["opcoes"],
                 "tempo_limite": self.tempo_limite_rodada,
+                "apelidos": apelidos,
+                "pontuacao": pontuacao,
+                "posicao": posicao,
             }
             self.enviar_pergunta_para_sala(codigo_sala, payload)
 
         self._agendar_timeout_rodada(codigo_sala)
 
+    # [Origem: IA]
     def _enviar_fim_jogo(self, codigo_sala: str, vencedor: str, estado: EstadoJogo | None):
         pontuacao = estado.pontuacao_jogadores.copy() if estado else {}
         posicao = estado.posicao_barra if estado else 0
@@ -616,37 +617,29 @@ class ServidorQuiz:
                 "apelidos": apelidos,
             },
         )
-        # Agenda limpeza da sala após 3s — dá tempo dos clientes receberem FIM_JOGO
-        timer = threading.Timer(3.0, self._resetar_sala_pos_jogo, args=(codigo_sala,))
-        timer.daemon = True
-        timer.start()
-
-    def _resetar_sala_pos_jogo(self, codigo_sala: str):
-        """
-        Limpa a sala após o fim de uma partida para o servidor aceitar novos jogadores.
-        Os sockets não são fechados — os clientes podem reconectar enviando ENTRAR novamente.
-        """
+        # Limpa a sala na hora. Os sockets NÃO são fechados: os jogadores
+        # continuam conectados e podem reentrar na fila ("Jogar novamente").
+        # Uma nova partida só começa quando os DOIS reenviarem ENTRAR.
         with self._lock:
-            sala = self.salas.get(codigo_sala)
-            if sala:
-                # Remove jogadores do dicionário de conectados se o socket já fechou
-                for id_jogador in list(sala.get("jogadores", [])):
-                    sock = self.jogadores_conectados.get(id_jogador)
-                    if sock is not None:
-                        try:
-                            # Testa se o socket ainda está vivo
-                            sock.getpeername()
-                        except OSError:
-                            # Socket fechado — remove do mapa
-                            self.jogadores_conectados.pop(id_jogador, None)
             self._limpar_sala(codigo_sala)
-            print(f"[SERVIDOR] Sala {codigo_sala} resetada. Aguardando novos jogadores...")
+            # Tira da fila quaisquer jogadores dessa sala que tenham sobrado.
+            self.fila_espera = [
+                j for j in self.fila_espera
+                if j not in [jid for jid in pontuacao]
+            ]
+        print(f"[SERVIDOR] Sala {codigo_sala} encerrada. Aguardando novos ENTRAR para nova partida.")
 
     # -----------------------------------------------------------------------
     # Timeout de rodada em background
     # -----------------------------------------------------------------------
 
+    # [Origem: IA]
     def _agendar_timeout_rodada(self, codigo_sala: str):
+        """
+        Liga um cronômetro em outra thread (threading.Timer). Se a rodada não
+        terminar antes, _timeout_rodada é chamado. O +0,5 s é uma folga para a
+        resposta enviada no último segundo ainda chegar pela rede.
+        """
         self._cancelar_timer_timeout(codigo_sala)
         timer = threading.Timer(
             self.tempo_limite_rodada + 0.5,
@@ -657,24 +650,68 @@ class ServidorQuiz:
         timer.start()
         self._timers_timeout[codigo_sala] = timer
 
+    # [Origem: IA]
     def _cancelar_timer_timeout(self, codigo_sala: str):
         timer = self._timers_timeout.pop(codigo_sala, None)
         if timer is not None:
             timer.cancel()
 
+    # [Origem: IA]
+    def _vencedor_pelas_respostas(self, codigo_sala: str) -> str | None:
+        """
+        Determina o vencedor a partir das respostas JÁ registradas na rodada.
+        Vence quem acertou a resposta correta PRIMEIRO (menor timestamp).
+        Retorna None se ninguém que respondeu acertou.
+        """
+        estado_rodada = self.rodadas_por_sala.get(codigo_sala, {})
+        pergunta = self.perguntas_rodada.get(codigo_sala, {})
+        resposta_correta = str(pergunta.get("resposta_correta", "")).strip().upper()
+
+        respostas_certas = [
+            jid for jid, dados in estado_rodada.get("respostas", {}).items()
+            if dados.get("resposta") == resposta_correta
+        ]
+        if not respostas_certas:
+            return None
+        return min(
+            respostas_certas,
+            key=lambda jid: estado_rodada["respostas"][jid]["tempo"],
+        )
+
+    # [Origem: IA]
     def _timeout_rodada(self, codigo_sala: str):
+        """
+        Chamado quando o tempo da rodada esgota. Mesmo que nem todos tenham
+        respondido, quem JÁ acertou deve pontuar — não zeramos a rodada.
+        """
         with self._lock:
             estado_rodada = self.rodadas_por_sala.get(codigo_sala)
             if estado_rodada is None or estado_rodada.get("concluida"):
                 return
             estado_rodada["concluida"] = True
-        self._resolver_rodada(codigo_sala, vencedor=None)
+
+            # Determina o vencedor pelas respostas que chegaram até agora.
+            vencedor = self._vencedor_pelas_respostas(codigo_sala)
+
+            # Atualiza o estado do jogo com esse vencedor (se houver), dentro do lock.
+            estado = self.estado_por_sala.get(codigo_sala)
+            if estado and vencedor:
+                estado.registrarResultadoRodada(vencedor)
+
+        # Resolve fora do lock (envia FIM_RODADA/ATUALIZAR_BARRA/etc.).
+        self._resolver_rodada(codigo_sala, vencedor=vencedor)
+        return {"vencedor": vencedor or "nenhum"}
 
     # -----------------------------------------------------------------------
     # Rede — envio e recebimento
     # -----------------------------------------------------------------------
 
+    # [Origem: IA]
     def _enviar_mensagem_socket(self, socket_cliente, tipo_mensagem: TipoMensagem, dados: dict) -> bool:
+        """
+        Monta a mensagem e envia com sendall (que garante mandar TODOS os bytes,
+        ao contrário de send). Retorna False se o cliente já desconectou.
+        """
         if socket_cliente is None:
             return False
         mensagem = criar_mensagem(tipo_mensagem, dados)
@@ -689,10 +726,7 @@ class ServidorQuiz:
         except (OSError, AttributeError, TypeError):
             return False
 
-    def transmitir(self, tipo_mensagem: TipoMensagem, dados: dict):
-        for cliente in list(self.jogadores_conectados.values()):
-            self._enviar_mensagem_socket(cliente, tipo_mensagem, dados)
-
+    # [Origem: IA]
     def transmitir_para_sala(self, codigo_sala: str, tipo_mensagem: TipoMensagem, dados: dict):
         sala = self.salas.get(codigo_sala)
         if not sala:
@@ -702,6 +736,7 @@ class ServidorQuiz:
             if sock is not None:
                 self._enviar_mensagem_socket(sock, tipo_mensagem, dados)
 
+    # [Origem: IA]
     def _obter_codigo_sala_do_jogador(self, id_jogador: str) -> str | None:
         for codigo_sala, sala in self.salas.items():
             if id_jogador in sala.get("jogadores", []):
@@ -712,9 +747,17 @@ class ServidorQuiz:
     # Parsing de buffer TCP
     # -----------------------------------------------------------------------
 
+    # [Origem: IA]
+    # [IA - base inicial] A ideia de acumular bytes num buffer e ler o
+    # cabeçalho de tamanho veio da base inicial, também gerada com IA.
     def _processar_buffer_cliente(self, buffer: bytes):
         """
         Extrai TODAS as mensagens completas do buffer de uma vez.
+
+        Por que precisa de buffer: TCP é um FLUXO de bytes, não de mensagens.
+        Um recv() pode trazer meia mensagem, uma mensagem inteira ou várias
+        grudadas. Por isso cada mensagem tem na frente 4 bytes com o seu
+        tamanho: o servidor só processa quando todos os bytes chegaram.
 
         Retorna (lista_de_mensagens, resto_do_buffer). Trata dois formatos:
           - JSON puro concatenado (usado em testes e no canal de compatibilidade)
@@ -770,6 +813,7 @@ class ServidorQuiz:
 
         return mensagens, buffer
 
+    # [Origem: IA 66% · autoral 34%]
     def processar_mensagens_de_conexao(self, conexao):
         """
         Loop de recepção de uma conexão de cliente (roda em thread própria).
@@ -778,6 +822,8 @@ class ServidorQuiz:
         despacha cada uma para processar_mensagem(). Ao encerrar (socket fechado
         ou erro), trata a desconexão notificando o adversário.
         """
+        # [IA - base inicial] Buffer que acumula os bytes recebidos (ver também
+        # "buffer += dados" abaixo); as mensagens são recortadas dele.
         buffer = b""
         while True:
             try:
@@ -814,6 +860,7 @@ class ServidorQuiz:
         # Conexão encerrada: identifica o jogador, notifica o adversário e limpa.
         self._tratar_desconexao_de_socket(conexao)
 
+    # [Origem: IA]
     def _tratar_desconexao_de_socket(self, conexao):
         """
         Quando um socket cai, remove o jogador, avisa o adversário com DESCONEXAO
@@ -858,10 +905,17 @@ class ServidorQuiz:
                 self._limpar_sala(codigo_sala)
                 print(f"[SERVIDOR] Partida em {codigo_sala} encerrada por desconexão de {id_desconectado}")
 
+    # [Origem: autoral 50% · IA 50%]
     def escutar_cliente(self, conexao):
         self.processar_mensagens_de_conexao(conexao)
 
+    # [Origem: autoral 50% · IA 50%]
     def aceitar_conexoes(self):
+        """
+        Loop do socket TCP "de escuta": accept() devolve um socket NOVO para
+        cada cliente que conecta. Cada cliente ganha sua própria thread, assim
+        o servidor atende os dois jogadores ao mesmo tempo.
+        """
         while self._servidor_ativo:
             try:
                 conexao, endereco = self.socket_tcp.accept()
@@ -880,6 +934,7 @@ class ServidorQuiz:
             thread = threading.Thread(target=self.escutar_cliente, args=(conexao,), daemon=True)
             thread.start()
 
+    # [Origem: autoral]
     @staticmethod
     def _ativar_timeout_leitura(sock, segundos: float = 60):
         """Define um timeout de recv() no socket, se suportado (sockets fake em testes não têm)."""
@@ -888,6 +943,7 @@ class ServidorQuiz:
         except (OSError, AttributeError):
             pass
 
+    # [Origem: IA]
     @staticmethod
     def _ativar_keepalive(sock):
         """Habilita SO_KEEPALIVE em um socket TCP, se suportado pela plataforma."""
@@ -900,7 +956,15 @@ class ServidorQuiz:
     # UDP — ping/pong
     # -----------------------------------------------------------------------
 
+    # [Origem: IA]
     def escutar_ping_udp(self):
+        """
+        Responde PING com PONG pelo UDP, para o cliente medir a latência.
+
+        UDP não tem conexão: recvfrom() devolve os dados E o endereço de quem
+        mandou, e sendto() responde para esse endereço. Cada datagrama chega
+        inteiro (ou não chega), por isso aqui não é preciso buffer como no TCP.
+        """
         while self._servidor_ativo:
             try:
                 dados, endereco = self.socket_udp.recvfrom(4096)
@@ -914,20 +978,15 @@ class ServidorQuiz:
 
             try:
                 # UDP transporta datagramas JSON puros (sem cabeçalho de tamanho).
-                # Aceita também formato com cabeçalho por retrocompatibilidade.
-                raw = dados
-                if raw[:1] != b"{" and len(raw) >= 4:
-                    tamanho = int.from_bytes(raw[:4], byteorder="big", signed=False)
-                    if tamanho > 0 and len(raw) >= 4 + tamanho:
-                        raw = raw[4:4 + tamanho]
-                mensagem = json.loads(raw.decode("utf-8"))
+                mensagem = json.loads(dados.decode("utf-8"))
             except Exception:
                 continue
 
-            self.ultimo_ping = mensagem
+            if mensagem.get("tipo") != TipoMensagem.PING.value:
+                continue
             # PONG também é enviado como datagrama JSON puro. Ecoamos o campo
-            # "ts" (timestamp) que veio no PING, se houver, para que o cliente
-            # possa calcular o RTT (round-trip time) subtraindo do relógio dele.
+            # "ts" que veio no PING para o cliente saber a qual PING este PONG
+            # responde (e descartar PONGs atrasados de medições antigas).
             dados_pong = {"id_jogador": mensagem.get("id_jogador", "cliente")}
             if "ts" in mensagem:
                 dados_pong["ts"] = mensagem["ts"]
@@ -939,23 +998,31 @@ class ServidorQuiz:
     # Inicialização e encerramento
     # -----------------------------------------------------------------------
 
+    # [Origem: IA]
     def iniciar_servidor_tcp(self):
         self._servidor_ativo = True
+        # AF_INET = IPv4; SOCK_STREAM = TCP (fluxo confiável e ordenado).
         self.socket_tcp = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        # SO_REUSEADDR: permite reabrir o servidor na mesma porta logo após
+        # fechá-lo (sem esperar o estado TIME_WAIT do SO expirar).
         self.socket_tcp.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.socket_tcp.bind((self.host, self.porta_tcp))
         self.socket_tcp.listen()
+        # Timeout curto no accept() para o loop poder checar se o servidor foi desligado.
         self.socket_tcp.settimeout(0.2)
         print(f"[TCP] Servidor ouvindo em {self.host}:{self.porta_tcp}")
 
+    # [Origem: IA]
     def iniciar_servidor_udp(self):
         self._servidor_ativo = True
+        # SOCK_DGRAM = UDP (datagramas independentes, sem garantia de entrega).
         self.socket_udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.socket_udp.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.socket_udp.bind((self.host, self.porta_udp))
         self.socket_udp.settimeout(0.2)
         print(f"[UDP] Servidor ouvindo em {self.host}:{self.porta_udp}")
 
+    # [Origem: IA 82% · autoral 18%]
     def fechar_servidor(self):
         self._servidor_ativo = False
         for codigo_sala in list(self._timers_timeout.keys()):
@@ -974,6 +1041,7 @@ class ServidorQuiz:
                 except OSError:
                     pass
 
+    # [Origem: IA]
     def iniciar_loop_principal(self):
         self.iniciar_servidor_tcp()
         self.iniciar_servidor_udp()
@@ -988,84 +1056,6 @@ class ServidorQuiz:
         except KeyboardInterrupt:
             print("\nEncerrando servidor...")
             self.fechar_servidor()
-
-    # -----------------------------------------------------------------------
-    # APIs de compatibilidade com testes legados
-    # -----------------------------------------------------------------------
-
-    def lidar_com_pergunta(self, pergunta: dict):
-        """Envia pergunta para todos os clientes conectados."""
-        self.transmitir(TipoMensagem.PERGUNTA, pergunta)
-
-    def processar_resposta(
-        self,
-        jogador_a: str,
-        jogador_b: str,
-        resposta_a: str,
-        resposta_b: str,
-        resposta_correta: str = "TCP",
-    ) -> dict:
-        """Compatibilidade com testes legados (sem timing)."""
-        resultado = resolverResultadoRodada(
-            jogador_a=jogador_a,
-            jogador_b=jogador_b,
-            resposta_a=resposta_a,
-            resposta_b=resposta_b,
-            resposta_correta=resposta_correta,
-        )
-
-        vencedor_rodada = resultado["vencedor"]
-        if vencedor_rodada not in ("empate", "nenhum"):
-            estado = self.estado_por_sala.get("sala-1") or self._estado_global
-            estado.registrarResultadoRodada(vencedor_rodada)
-            self.estado_jogo._sync()
-            # Mantém posicao_barra no proxy alinhada com o resultado
-            self.estado_jogo["posicao_barra"] = estado.posicao_barra
-
-        return resultado
-
-    def avancar_rodada(self) -> bool:
-        estado = self.estado_por_sala.get("sala-1", self._estado_global)
-        result = estado.avancar_rodada()
-        self.estado_jogo._sync()
-        return result
-
-    def registrar_pontuacao(self, jogador: str):
-        estado = self.estado_por_sala.get("sala-1", self._estado_global)
-        estado.pontuacao_jogadores[jogador] = estado.pontuacao_jogadores.get(jogador, 0) + 1
-        if estado.pontuacao_jogadores[jogador] >= 2:
-            estado.vencedor = jogador
-        self.estado_jogo._sync()
-        return estado
-
-    def iniciar_partida(self) -> dict:
-        estado = self.estado_por_sala.get("sala-1", self._estado_global)
-        self.estado_jogo._sync()
-        return {
-            "rodada": estado.rodada_atual,
-            "maximo_rodadas": estado.maximo_rodadas,
-            "pontuacao": estado.pontuacao_jogadores,
-        }
-
-    def remover_jogador(self, id_jogador: str):
-        with self._lock:
-            sock = self.jogadores_conectados.pop(id_jogador, None)
-            if sock is not None and isinstance(sock, socket.socket):
-                try:
-                    sock.close()
-                except OSError:
-                    pass
-            for codigo_sala, sala in list(self.salas.items()):
-                jogadores = sala.get("jogadores", [])
-                if id_jogador in jogadores:
-                    sala["jogadores"] = [j for j in jogadores if j != id_jogador]
-                    self.transmitir(
-                        TipoMensagem.DESCONEXAO,
-                        {"id_jogador": id_jogador, "codigo_sala": codigo_sala},
-                    )
-                    if not sala["jogadores"]:
-                        self._limpar_sala(codigo_sala)
-                    break
 
 
 if __name__ == "__main__":

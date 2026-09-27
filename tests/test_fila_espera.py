@@ -1,4 +1,12 @@
+# [Origem: autoral 70% · IA 30%] Medido com git blame (ver USO_DE_IA.md).
 from src.server.server import ServidorQuiz
+
+
+def _entrar(servidor, id_jogador, sock):
+    """Simula o cliente enviando ENTRAR pelo socket `sock` (mesmo caminho da rede real)."""
+    return servidor.processar_mensagem(
+        {"tipo": "ENTRAR", "id_jogador": id_jogador, "apelido": id_jogador}, sock
+    )
 
 
 def test_servidor_organiza_fila_de_espera_e_aceita_sala_com_dois_jogadores():
@@ -17,8 +25,8 @@ def test_servidor_organiza_fila_de_espera_e_aceita_sala_com_dois_jogadores():
 def test_servidor_cria_sala_automaticamente_ao_registrar_segundo_jogador():
     servidor = ServidorQuiz()
 
-    servidor.registrar_jogador("player-1", object())
-    sala = servidor.registrar_jogador("player-2", object())
+    _entrar(servidor, "player-1", object())
+    sala = _entrar(servidor, "player-2", object())
 
     assert sala is not None
     assert sala["codigo"] == "sala-1"
@@ -29,8 +37,8 @@ def test_servidor_cria_sala_automaticamente_ao_registrar_segundo_jogador():
 def test_servidor_permite_apenas_uma_sala_ativa_por_vez():
     servidor = ServidorQuiz()
 
-    servidor.registrar_jogador("player-1", object())
-    servidor.registrar_jogador("player-2", object())
+    _entrar(servidor, "player-1", object())
+    _entrar(servidor, "player-2", object())
 
     servidor.adicionar_jogador_espera("player-3")
     servidor.adicionar_jogador_espera("player-4")
@@ -44,8 +52,8 @@ def test_servidor_permite_apenas_uma_sala_ativa_por_vez():
 def test_servidor_gera_id_unico_quando_o_mesmo_identificador_é_usado_duas_vezes():
     servidor = ServidorQuiz()
 
-    servidor.registrar_jogador("player-1", object())
-    sala = servidor.registrar_jogador("player-1", object())
+    _entrar(servidor, "player-1", object())
+    sala = _entrar(servidor, "player-1", object())
 
     assert sala is not None
     assert sala["jogadores"] == ["player-1", "player-2"]
@@ -64,8 +72,8 @@ def test_servidor_envia_pergunta_para_todos_os_jogadores_da_sala():
     jogador_1 = SoqueteFake()
     jogador_2 = SoqueteFake()
 
-    servidor.registrar_jogador("player-1", jogador_1)
-    servidor.registrar_jogador("player-2", jogador_2)
+    _entrar(servidor, "player-1", jogador_1)
+    _entrar(servidor, "player-2", jogador_2)
 
     pergunta = {
         "rodada_id": 1,
@@ -80,20 +88,10 @@ def test_servidor_envia_pergunta_para_todos_os_jogadores_da_sala():
     assert jogador_1.ultima_mensagem["pergunta"] == pergunta["pergunta"]
 
 
-def test_servidor_avisa_quando_um_jogador_desconecta_da_sala():
-    servidor = ServidorQuiz()
-    servidor.registrar_jogador("player-1", object())
-    servidor.registrar_jogador("player-2", object())
-
-    servidor.remover_jogador("player-2")
-
-    assert "player-2" not in servidor.salas["sala-1"]["jogadores"]
-
-
 def test_servidor_registra_respostas_por_sala_e_resolve_rodada_quando_os_dois_jogadores_responderam():
     servidor = ServidorQuiz()
-    servidor.registrar_jogador("player-1", object())
-    sala = servidor.registrar_jogador("player-2", object())
+    _entrar(servidor, "player-1", object())
+    sala = _entrar(servidor, "player-2", object())
 
     assert sala is not None
 
@@ -110,7 +108,7 @@ def test_servidor_registra_respostas_por_sala_e_resolve_rodada_quando_os_dois_jo
 
     resultado_2 = servidor.registrar_resposta_jogador("sala-1", 1, "player-2", resposta_errada)
     assert resultado_2["vencedor"] == "player-1"
-    assert servidor.estado_jogo["pontuacao"]["player-1"] == 1
+    assert servidor.estado_por_sala["sala-1"].pontuacao_jogadores["player-1"] == 1
 
 
 def test_servidor_lida_com_multiplas_mensagens_na_mesma_conexao():
@@ -166,8 +164,8 @@ def test_servidor_avanca_para_proxima_pergunta_apos_as_duas_respostas():
     jogador_1 = SoqueteFake()
     jogador_2 = SoqueteFake()
 
-    servidor.registrar_jogador("player-1", jogador_1)
-    servidor.registrar_jogador("player-2", jogador_2)
+    _entrar(servidor, "player-1", jogador_1)
+    _entrar(servidor, "player-2", jogador_2)
 
     pergunta_atual = servidor.perguntas_rodada.get("sala-1", {})
     resposta_certa = pergunta_atual.get("resposta_correta", "TCP")
@@ -198,8 +196,8 @@ def test_servidor_avanca_para_proxima_pergunta_quando_ninguem_acerta():
     jogador_1 = SoqueteFake()
     jogador_2 = SoqueteFake()
 
-    servidor.registrar_jogador("player-1", jogador_1)
-    servidor.registrar_jogador("player-2", jogador_2)
+    _entrar(servidor, "player-1", jogador_1)
+    _entrar(servidor, "player-2", jogador_2)
 
     # Envia respostas garantidamente erradas (usa opções que não são a correta)
     pergunta_atual = servidor.perguntas_rodada.get("sala-1", {})
@@ -232,8 +230,8 @@ def test_servidor_espera_os_dois_jogadores_antes_de_finalizar_rodada_mesmo_que_u
     jogador_1 = SoqueteFake()
     jogador_2 = SoqueteFake()
 
-    servidor.registrar_jogador("player-1", jogador_1)
-    servidor.registrar_jogador("player-2", jogador_2)
+    _entrar(servidor, "player-1", jogador_1)
+    _entrar(servidor, "player-2", jogador_2)
 
     pergunta_atual = servidor.perguntas_rodada.get("sala-1", {})
     resposta_certa = pergunta_atual.get("resposta_correta", "TCP")

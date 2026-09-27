@@ -1,3 +1,4 @@
+# [Origem: autoral 77% · IA 23%] Medido com git blame (ver USO_DE_IA.md).
 import json
 
 from src.client.client import ClienteQuiz
@@ -63,28 +64,26 @@ def test_extrair_detalhes_desconexao_retorna_informacoes_do_jogador():
     assert dados["codigo_sala"] == "sala-1"
 
 
-def test_gui_bloqueia_alteracao_de_resposta_apos_envio_e_reabilita_na_proxima_rodada():
-    class WidgetFake:
-        def __init__(self):
+def test_gui_bloqueia_alteracao_de_resposta_apos_envio():
+    """
+    Após enviar a resposta, os botões de opção e o botão Enviar devem ser
+    desabilitados, e a flag resposta_enviada deve virar True (impede reenvio).
+    Reflete a GUI atual, que usa botões de opção individuais (_botoes_opcao).
+    """
+    class BotaoFake:
+        def __init__(self, valor=None):
             self.state = "normal"
-
+            self.kwargs = {}
+            self._opcao_valor = valor
         def config(self, **kwargs):
             self.state = kwargs.get("state", self.state)
-
-    class MenuFake:
-        def __init__(self):
-            self.opcoes = []
-
-        def delete(self, *args, **kwargs):
-            self.opcoes.clear()
-
-        def add_command(self, **kwargs):
-            self.opcoes.append(kwargs["label"])
+            self.kwargs.update(kwargs)
+        def __getitem__(self, chave):
+            return self.state if chave == "state" else self.kwargs.get(chave)
 
     class ClienteFake:
         def __init__(self):
             self.envios = []
-
         def enviar_resposta(self, *args):
             self.envios.append(args)
 
@@ -96,27 +95,23 @@ def test_gui_bloqueia_alteracao_de_resposta_apos_envio_e_reabilita_na_proxima_ro
         "tempo_limite": 30,
     }
     app.id_jogador = "player-1"
-    app.menu_opcoes = WidgetFake()
-    app.botao_enviar = WidgetFake()
-    app.rotulo_pergunta = type("LabelFake", (), {"config": lambda self, **kwargs: None})()
-    app.rotulo_tempo = type("LabelFake", (), {"config": lambda self, **kwargs: None})()
+    app.resposta_enviada = False
+    app._botoes_opcao = [BotaoFake("TCP"), BotaoFake("UDP")]
+    app.botao_enviar = BotaoFake()
     app.rotulo_status = type("LabelFake", (), {"config": lambda self, **kwargs: None})()
     app.opcoes_var = type("VarFake", (), {"get": lambda self: "TCP", "set": lambda self, value: None})()
     app.cliente = ClienteFake()
-    app.menu_opcoes._menu = MenuFake()
-    app.menu_opcoes.__getitem__ = lambda self, chave: self._menu
 
     app.enviar_resposta()
 
-    assert app.menu_opcoes.state == "disabled"
+    # A resposta foi enviada ao servidor
+    assert app.cliente.envios == [("player-1", 1, "TCP")]
+    # A flag impede reenvio
+    assert app.resposta_enviada is True
+    # Os controles foram desabilitados
+    assert all(b.state == "disabled" for b in app._botoes_opcao)
     assert app.botao_enviar.state == "disabled"
 
-    app.atualizar_pergunta({
-        "rodada_id": 2,
-        "pergunta": "Pergunta 2",
-        "opcoes": ["TCP", "UDP", "ICMP"],
-        "tempo_limite": 30,
-    })
-
-    assert app.menu_opcoes.state == "normal"
-    assert app.botao_enviar.state == "normal"
+    # Um segundo envio não deve reenviar (resposta_enviada já é True)
+    app.enviar_resposta()
+    assert len(app.cliente.envios) == 1

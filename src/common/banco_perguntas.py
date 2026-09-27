@@ -4,13 +4,18 @@ banco_perguntas.py — Fonte das perguntas de redes usadas no quiz.
 Cada pergunta é um dict: {"pergunta": str, "opcoes": [str x4], "resposta_correta": str}.
 Tenta carregar de data/perguntas_redes.json; se o arquivo não existir, usa um
 banco embutido (_perguntas_padrao) — assim o jogo funciona sem configuração.
+
+Marcação de origem (ver USO_DE_IA.md): "# [Origem: ...]" acima de cada
+classe/função — "IA" = escrito com auxílio de IA; "autoral" = escrito pelos
+integrantes sem IA (medido com git blame).
 """
 import json
-import random
 from pathlib import Path
 
 
+# [Origem: autoral]
 class BancoPerguntas:
+    # [Origem: autoral]
     def __init__(self, caminho_arquivo: str | None = None):
         # Por padrão, procura o JSON em <projeto>/data/perguntas_redes.json.
         if caminho_arquivo is None:
@@ -20,6 +25,7 @@ class BancoPerguntas:
         self.caminho_arquivo = Path(caminho_arquivo)
         self._perguntas = self._carregar_perguntas()
 
+    # [Origem: autoral]
     def _carregar_perguntas(self):
         """Carrega do arquivo JSON; cai no banco embutido se ele não existir ou for inválido."""
         if not self.caminho_arquivo.exists():
@@ -40,6 +46,7 @@ class BancoPerguntas:
 
         return perguntas or self._perguntas_padrao()
 
+    # [Origem: autoral]
     def _perguntas_padrao(self):
         return [
             {
@@ -199,17 +206,8 @@ class BancoPerguntas:
             },
         ]
 
+    # [Origem: autoral 67% · IA 33%]
     def obter_perguntas(self):
         """Retorna uma cópia da lista de perguntas (evita mutação externa)."""
         return list(self._perguntas)
-
-    def embaralhar(self):
-        """Retorna as perguntas em ordem aleatória (não altera a ordem interna)."""
-        perguntas = self.obter_perguntas()
-        random.shuffle(perguntas)
-        return perguntas
-
-    def selecionar_aleatoria(self):
-        """Sorteia uma única pergunta ao acaso."""
-        return random.choice(self.obter_perguntas())
 

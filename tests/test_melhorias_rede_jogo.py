@@ -1,3 +1,4 @@
+# [Origem: IA] Medido com git blame (ver USO_DE_IA.md).
 """
 Testes das melhorias de rede e de jogo:
   - Framing TCP robusto no cliente (rajada de mensagens)
@@ -229,16 +230,17 @@ def test_servidor_notifica_adversario_ao_cair_conexao():
 # ---------------------------------------------------------------------------
 
 def test_estado_jogo_termina_exatamente_na_ultima_rodada_por_barra():
-    jogo = EstadoJogo(maximo_rodadas=10, pontos_para_vencer=99)  # impede vitória por pontos
+    # vantagem alta impede knockout por diferença; testamos só o desempate no fim
+    jogo = EstadoJogo(maximo_rodadas=10, vantagem_para_vencer=99)
     jogo.rodada_atual = 10
-    # Jogador A com vantagem na barra
+    # Jogador A com a corda do seu lado
     jogo.posicao_barra = 2
     vencedor = jogo.verificar_fim_de_jogo()
     assert vencedor == "player-1"
 
 
 def test_estado_jogo_empate_desempata_por_pontos():
-    jogo = EstadoJogo(maximo_rodadas=10, pontos_para_vencer=99)
+    jogo = EstadoJogo(maximo_rodadas=10, vantagem_para_vencer=99)
     jogo.rodada_atual = 10
     jogo.posicao_barra = 0
     jogo.pontuacao_jogadores = {"player-1": 4, "player-2": 6}
@@ -247,7 +249,7 @@ def test_estado_jogo_empate_desempata_por_pontos():
 
 
 def test_estado_jogo_nao_termina_antes_da_ultima_rodada():
-    jogo = EstadoJogo(maximo_rodadas=10, pontos_para_vencer=99)
+    jogo = EstadoJogo(maximo_rodadas=10, vantagem_para_vencer=99)
     jogo.rodada_atual = 5
     jogo.posicao_barra = 3
     assert jogo.verificar_fim_de_jogo() is None
@@ -335,3 +337,157 @@ def test_parser_servidor_extrai_rajada_com_cabecalho():
     tipos = [m.get("tipo") for m in mensagens]
     assert tipos == ["ENTRAR", "RESPOSTA"]
     assert resto == b""
+
+
+# ---------------------------------------------------------------------------
+# Reentrada na mesma conexão ("Jogar novamente" sem reconectar)
+# ---------------------------------------------------------------------------
+
+def test_reentrada_na_mesma_conexao_reusa_id():
+    """
+    Um segundo ENTRAR na MESMA conexão (mesmo socket) deve reusar o MESMO
+    id_jogador, sem renomear para player-1-1. É o que permite "jogar novamente"
+    sem reconectar.
+    """
+    class SoqueteFake:
+        def __init__(self):
+            self.mensagens = []
+        def sendall(self, dados):
+            self.mensagens.append(json.loads(dados.decode("utf-8")))
+        def close(self):
+            pass
+
+    servidor = ServidorQuiz()
+    sock = SoqueteFake()
+
+    # Primeiro ENTRAR
+    servidor.processar_mensagem({"tipo": "ENTRAR", "id_jogador": "player-1", "apelido": "Alice"}, sock)
+    id_apos_primeiro = servidor.socket_para_jogador[id(sock)]
+
+    # Segundo ENTRAR na MESMA conexão (jogar novamente)
+    servidor.processar_mensagem({"tipo": "ENTRAR", "id_jogador": "player-1", "apelido": "Alice"}, sock)
+    id_apos_segundo = servidor.socket_para_jogador[id(sock)]
+
+    # O id deve ser o MESMO (reentrada), não renomeado
+    assert id_apos_primeiro == id_apos_segundo == "player-1"
+    # Só existe uma entrada para esse jogador nos conectados
+    assert list(servidor.jogadores_conectados.keys()).count("player-1") == 1
+
+
+def test_reentrada_atualiza_apelido():
+    """Se o jogador trocar o nome ao jogar novamente, o servidor atualiza o apelido."""
+    class SoqueteFake:
+        def __init__(self):
+            self.mensagens = []
+        def sendall(self, dados):
+            self.mensagens.append(json.loads(dados.decode("utf-8")))
+        def close(self):
+            pass
+
+    servidor = ServidorQuiz()
+    sock = SoqueteFake()
+
+    servidor.processar_mensagem({"tipo": "ENTRAR", "id_jogador": "player-1", "apelido": "Alice"}, sock)
+    servidor.processar_mensagem({"tipo": "ENTRAR", "id_jogador": "player-1", "apelido": "Alice Nova"}, sock)
+
+    jid = servidor.socket_para_jogador[id(sock)]
+    assert servidor.apelidos[jid] == "Alice Nova"
+
+
+# ---------------------------------------------------------------------------
+# PERGUNTA da 1ª rodada já traz apelidos (nomes aparecem desde o início)
+# ---------------------------------------------------------------------------
+
+def test_primeira_pergunta_inclui_apelidos():
+    """
+    A PERGUNTA (inclusive a da 1ª rodada) deve carregar os apelidos dos dois
+    jogadores, para o cliente exibir os nomes na barra desde o começo — sem
+    esperar a primeira ATUALIZAR_BARRA.
+    """
+    class SoqueteFake:
+        def __init__(self):
+            self.mensagens = []
+        def sendall(self, dados):
+            self.mensagens.append(json.loads(dados.decode("utf-8")))
+        def close(self):
+            pass
+
+    servidor = ServidorQuiz()
+    j1, j2 = SoqueteFake(), SoqueteFake()
+    servidor.processar_mensagem({"tipo": "ENTRAR", "id_jogador": "player-1", "apelido": "Alice"}, j1)
+    servidor.processar_mensagem({"tipo": "ENTRAR", "id_jogador": "player-2", "apelido": "Bob"}, j2)
+
+    perguntas = [m for m in j1.mensagens if m.get("tipo") == "PERGUNTA"]
+    assert perguntas, "Nenhuma PERGUNTA enviada"
+    primeira = perguntas[0]
+    assert "apelidos" in primeira, "PERGUNTA deveria incluir apelidos já na 1ª rodada"
+    assert primeira["apelidos"].get("player-1") == "Alice"
+    assert primeira["apelidos"].get("player-2") == "Bob"
+    # Continua sem vazar a resposta correta
+    assert "resposta_correta" not in primeira
+
+
+# ---------------------------------------------------------------------------
+# Rematch: reentrar sozinho NÃO inicia partida (evita "sala fantasma")
+# ---------------------------------------------------------------------------
+
+def test_reentrar_sozinho_nao_inicia_partida():
+    """
+    Após o fim de uma partida, se apenas UM jogador clicar "jogar novamente"
+    (reenviar ENTRAR), o jogo NÃO pode começar — deve esperar o segundo.
+    """
+    class SoqueteFake:
+        def __init__(self):
+            self.mensagens = []
+        def sendall(self, dados):
+            self.mensagens.append(json.loads(dados.decode("utf-8")))
+        def close(self):
+            pass
+
+    servidor = ServidorQuiz()
+    s1, s2 = SoqueteFake(), SoqueteFake()
+    # Primeira partida
+    servidor.processar_mensagem({"tipo": "ENTRAR", "id_jogador": "player-1", "apelido": "Alice"}, s1)
+    servidor.processar_mensagem({"tipo": "ENTRAR", "id_jogador": "player-2", "apelido": "Bob"}, s2)
+    assert "sala-1" in servidor.salas
+
+    # Encerra a partida (simula fim de jogo limpando a sala)
+    estado = servidor.estado_por_sala["sala-1"]
+    servidor._enviar_fim_jogo("sala-1", "player-1", estado)
+    assert "sala-1" not in servidor.salas, "sala deve ser limpa imediatamente ao fim do jogo"
+
+    # Só player-1 clica "jogar novamente"
+    s1.mensagens.clear()
+    servidor.processar_mensagem({"tipo": "ENTRAR", "id_jogador": "player-1", "apelido": "Alice"}, s1)
+
+    # NÃO deve haver partida ativa (aguardando o segundo jogador)
+    assert "sala-1" not in servidor.salas or len(servidor.salas["sala-1"]["jogadores"]) < 2
+    # O BEM_VINDO recebido deve indicar que NÃO está em partida
+    bem_vindos = [m for m in s1.mensagens if m.get("tipo") == "BEM_VINDO"]
+    assert bem_vindos and bem_vindos[-1]["em_partida"] is False
+
+
+def test_rematch_com_os_dois_inicia_nova_partida():
+    """Quando os DOIS reentram, uma nova partida começa normalmente."""
+    class SoqueteFake:
+        def __init__(self):
+            self.mensagens = []
+        def sendall(self, dados):
+            self.mensagens.append(json.loads(dados.decode("utf-8")))
+        def close(self):
+            pass
+
+    servidor = ServidorQuiz()
+    s1, s2 = SoqueteFake(), SoqueteFake()
+    servidor.processar_mensagem({"tipo": "ENTRAR", "id_jogador": "player-1", "apelido": "Alice"}, s1)
+    servidor.processar_mensagem({"tipo": "ENTRAR", "id_jogador": "player-2", "apelido": "Bob"}, s2)
+
+    estado = servidor.estado_por_sala["sala-1"]
+    servidor._enviar_fim_jogo("sala-1", "player-1", estado)
+
+    # Os dois reentram
+    servidor.processar_mensagem({"tipo": "ENTRAR", "id_jogador": "player-1", "apelido": "Alice"}, s1)
+    servidor.processar_mensagem({"tipo": "ENTRAR", "id_jogador": "player-2", "apelido": "Bob"}, s2)
+
+    assert "sala-1" in servidor.salas
+    assert set(servidor.salas["sala-1"]["jogadores"]) == {"player-1", "player-2"}

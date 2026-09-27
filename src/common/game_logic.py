@@ -1,53 +1,61 @@
 """
 Lógica do jogo Quiz Cabo de Guerra.
 
-Convenção de barra:
-  direcao_barra = +1 → jogador_a ganha a rodada, barra vai para o lado de A
-  direcao_barra = -1 → jogador_b ganha a rodada, barra vai para o lado de B
-  posicao_barra positiva → jogador_a está na frente
-  posicao_barra negativa → jogador_b está na frente
+MODELO DE CABO DE GUERRA (o que realmente importa é a VANTAGEM RELATIVA):
 
-A partida pode ser vencida por:
-  1. Acumulação de pontos (pontos_para_vencer)
-  2. Fim das rodadas (quem tiver mais pontos)
+  posicao_barra é a "corda". Ela representa a DIFERENÇA de rodadas vencidas
+  entre os dois jogadores:
+    > 0 → jogador_a está puxando a corda para o lado dele
+    < 0 → jogador_b está puxando a corda para o lado dele
+    == 0 → corda no centro (empate)
+
+  Cada rodada vencida move a corda 1 unidade na direção do vencedor. Se o
+  outro vencer a próxima, a corda volta — como num cabo de guerra real.
+
+A partida termina quando:
+  1. KNOCKOUT: a corda chega a uma das pontas, ou seja, a diferença de vitórias
+     atinge VANTAGEM_PARA_VENCER (3). Ex.: A vence 3 rodadas a mais que B.
+  2. FIM DAS RODADAS: acabaram as 10 perguntas. Vence quem tiver a corda do seu
+     lado (posicao != 0); se estiver exatamente no centro, é empate.
+
+Marcação de origem (ver USO_DE_IA.md): "# [Origem: ...]" acima de cada
+classe/função — "IA" = escrito com auxílio de IA; "autoral" = escrito pelos
+integrantes sem IA (medido com git blame).
 """
 from dataclasses import dataclass, field
 
-LIMITE_BARRA = 5
+# A corda vai de -VANTAGEM_PARA_VENCER a +VANTAGEM_PARA_VENCER.
+# Atingir uma das pontas (diferença de 3 vitórias) encerra o jogo.
+VANTAGEM_PARA_VENCER = 3
+LIMITE_BARRA = VANTAGEM_PARA_VENCER   # alias: a ponta da corda é a vantagem máxima
 MAXIMO_RODADAS = 10
 
 
-@dataclass
-class RodadaJogo:
-    """Representa uma única rodada (pergunta) — usado principalmente em testes."""
-    rodada_id: int                       # número da rodada (1..maximo_rodadas)
-    pergunta: str                        # enunciado
-    resposta_correta: str                # gabarito (só no servidor)
-    posicao_barra: int = 0               # posição da barra no momento
-    respondida: bool = False             # se já foi respondida
-    vencedor: str | None = None          # quem venceu a rodada
-    horario_resposta: float | None = None  # timestamp da resposta vencedora
-
-
+# [Origem: IA]
 @dataclass
 class EstadoJogo:
     """
     Estado completo de uma partida entre dois jogadores.
 
-    A barra (posicao_barra) é o coração do "cabo de guerra":
-      > 0 → jogador_a puxou para o seu lado (na frente)
-      < 0 → jogador_b puxou para o seu lado (na frente)
-      == 0 → empatado no centro
+    A corda (posicao_barra) é o coração do "cabo de guerra" — representa a
+    DIFERENÇA de rodadas vencidas:
+      > 0 → jogador_a puxou para o seu lado (está na frente)
+      < 0 → jogador_b puxou para o seu lado (está na frente)
+      == 0 → corda no centro (empatados)
+
+    pontuacao_jogadores guarda o total de rodadas que cada um venceu (só para
+    exibição/desempate); quem decide a vitória por knockout é a posicao_barra.
     """
     jogador_a: str = "player-1"          # id do jogador da esquerda
     jogador_b: str = "player-2"          # id do jogador da direita
     maximo_rodadas: int = MAXIMO_RODADAS  # total de rodadas da partida (10)
     rodada_atual: int = 1                # rodada em andamento
-    posicao_barra: int = 0               # ver docstring da classe
-    pontos_para_vencer: int = 3          # knockout: vence quem chegar a N pontos
-    pontuacao_jogadores: dict = field(default_factory=dict)  # {id: pontos}
+    posicao_barra: int = 0               # a corda: diferença de vitórias (-3 a +3)
+    vantagem_para_vencer: int = VANTAGEM_PARA_VENCER  # diferença que encerra o jogo
+    pontuacao_jogadores: dict = field(default_factory=dict)  # {id: rodadas vencidas}
     vencedor: str | None = None          # id do vencedor, "empate" ou None
 
+    # [Origem: IA]
     def __post_init__(self):
         # Garante que o placar comece zerado para os dois jogadores.
         if not self.pontuacao_jogadores:
@@ -57,6 +65,7 @@ class EstadoJogo:
     # API pública                                                          #
     # ------------------------------------------------------------------ #
 
+    # [Origem: autoral 62% · IA 38%]
     def avancar_rodada(self) -> bool:
         """Avança para a próxima rodada. Retorna False se já estiver na última ou se houver vencedor."""
         if self.vencedor is not None:
@@ -66,39 +75,42 @@ class EstadoJogo:
             return True
         return False
 
-    def atualizar_barra(self, delta: int):
-        """Move a barra em `delta` unidades (positivo = lado A, negativo = lado B)."""
-        self.posicao_barra += delta
-
+    # [Origem: IA]
     def registrarResultadoRodada(self, vencedor: str | None):
         """
-        Registra o resultado de uma rodada e atualiza pontuação/barra/vencedor.
-        Compatibilidade com testes legados.
+        Registra o resultado de uma rodada: incrementa o placar do vencedor e
+        puxa a corda 1 unidade na direção dele.
+
+        A vitória por KNOCKOUT acontece quando a corda atinge uma das pontas,
+        ou seja, quando a DIFERENÇA de vitórias chega a `vantagem_para_vencer`
+        (|posicao_barra| == 3). NÃO é por pontos acumulados — placar 3x2 não
+        encerra o jogo, mas 3x0 (ou 4x1, etc.) sim, pois a diferença é 3.
         """
         if vencedor is None or vencedor in ("nenhum", "empate"):
             return
 
+        # Placar (total de rodadas vencidas — usado para exibição e desempate)
         self.pontuacao_jogadores[vencedor] = self.pontuacao_jogadores.get(vencedor, 0) + 1
 
-        # Move a barra
+        # Puxa a corda na direção do vencedor
         if vencedor == self.jogador_a:
             self.posicao_barra += 1
         else:
             self.posicao_barra -= 1
 
-        # Verifica condição de vitória por pontos
-        if self.pontuacao_jogadores[vencedor] >= self.pontos_para_vencer:
+        # Knockout: a corda chegou na ponta (diferença de vitórias == 3)
+        if abs(self.posicao_barra) >= self.vantagem_para_vencer:
             self.vencedor = vencedor
 
+    # [Origem: IA]
     def verificar_fim_de_jogo(self) -> str | None:
         """
         Verifica se o jogo terminou após a rodada atual.
 
         IMPORTANTE: deve ser chamado ANTES de avancar_rodada(), enquanto
         rodada_atual ainda reflete a rodada que acabou de ser jogada. Assim, o
-        desempate por barra/pontos só dispara exatamente na última rodada
-        (rodada_atual == maximo_rodadas), evitando o bug off-by-one de terminar
-        cedo demais ou tarde demais.
+        desempate por barra/pontos só acontece exatamente na última rodada
+        (rodada_atual == maximo_rodadas).
         """
         if self.vencedor:
             return self.vencedor
@@ -125,44 +137,7 @@ class EstadoJogo:
 
         return self.vencedor
 
-    def terminou(self) -> bool:
-        if self.vencedor is not None:
-            return True
-        if self.rodada_atual >= self.maximo_rodadas:
-            return True
-        return any(p >= self.pontos_para_vencer for p in self.pontuacao_jogadores.values())
 
-
-# ---------------------------------------------------------------------------
-# Função utilitária de resolução de rodada
-# ---------------------------------------------------------------------------
-
-def resolverResultadoRodada(
-    jogador_a: str,
-    jogador_b: str,
-    resposta_a: str,
-    resposta_b: str,
-    resposta_correta: str = "TCP",
-) -> dict:
-    """
-    Determina o vencedor de uma rodada sem considerar timing.
-
-    Retorna:
-      vencedor      : id do vencedor, "empate" ou "nenhum"
-      delta_barra   : quanto a barra se move (0 ou 1)
-      direcao_barra : +1 = jogador_a vence, -1 = jogador_b vence, 0 = ninguém
-    """
-    correta = resposta_correta.strip().upper()
-    acertou_a = resposta_a.strip().upper() == correta
-    acertou_b = resposta_b.strip().upper() == correta
-
-    if acertou_a and not acertou_b:
-        return {"vencedor": jogador_a, "delta_barra": 1, "direcao_barra": 1}
-    if acertou_b and not acertou_a:
-        return {"vencedor": jogador_b, "delta_barra": 1, "direcao_barra": -1}
-    if acertou_a and acertou_b:
-        return {"vencedor": "empate", "delta_barra": 0, "direcao_barra": 0}
-    return {"vencedor": "nenhum", "delta_barra": 0, "direcao_barra": 0}
 
 
 

@@ -1,5 +1,16 @@
+# [Origem: IA 55% · autoral 45%] Medido com git blame (ver USO_DE_IA.md).
 from src.common.banco_perguntas import BancoPerguntas
 from src.server.server import ServidorQuiz
+
+
+def _iniciar_partida():
+    """Dois jogadores enviam ENTRAR (mesmo caminho da rede real) e a partida começa."""
+    servidor = ServidorQuiz()
+    for id_jogador in ("player-1", "player-2"):
+        servidor.processar_mensagem(
+            {"tipo": "ENTRAR", "id_jogador": id_jogador, "apelido": id_jogador}, object()
+        )
+    return servidor
 
 
 def test_banco_tem_30_perguntas_relacionadas_a_redes():
@@ -15,9 +26,7 @@ def test_banco_tem_30_perguntas_relacionadas_a_redes():
 
 
 def test_servidor_seleciona_pergunta_do_banco_para_a_sala():
-    servidor = ServidorQuiz()
-    servidor.registrar_jogador("player-1", object())
-    servidor.registrar_jogador("player-2", object())
+    servidor = _iniciar_partida()
 
     pergunta = servidor.selecionar_pergunta_para_sala("sala-1")
 
@@ -28,9 +37,7 @@ def test_servidor_seleciona_pergunta_do_banco_para_a_sala():
 
 
 def test_servidor_usa_tempo_limite_e_uma_resposta_por_jogador_por_rodada():
-    servidor = ServidorQuiz()
-    servidor.registrar_jogador("player-1", object())
-    servidor.registrar_jogador("player-2", object())
+    servidor = _iniciar_partida()
 
     # Pergunta já foi selecionada pelo _iniciar_primeira_rodada
     pergunta = servidor.perguntas_rodada.get("sala-1", {})
@@ -58,9 +65,7 @@ def test_servidor_usa_tempo_limite_e_uma_resposta_por_jogador_por_rodada():
 
 
 def test_servidor_vence_no_primeiro_acerto_dentro_do_tempo_limite():
-    servidor = ServidorQuiz()
-    servidor.registrar_jogador("player-1", object())
-    servidor.registrar_jogador("player-2", object())
+    servidor = _iniciar_partida()
 
     pergunta = servidor.perguntas_rodada.get("sala-1", {})
     resposta_correta = pergunta.get("resposta_correta", "TCP")
@@ -73,4 +78,4 @@ def test_servidor_vence_no_primeiro_acerto_dentro_do_tempo_limite():
 
     assert resultado is not None
     assert resultado["vencedor"] == "player-1"
-    assert servidor.estado_jogo["pontuacao"]["player-1"] == 1
+    assert servidor.estado_por_sala["sala-1"].pontuacao_jogadores["player-1"] == 1
