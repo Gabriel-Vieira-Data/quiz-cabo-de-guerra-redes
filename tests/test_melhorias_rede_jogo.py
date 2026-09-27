@@ -1,4 +1,4 @@
-# [Origem: IA] Medido com git blame (ver USO_DE_IA.md).
+# [Origem: IA] Medido com git blame.
 """
 Testes das melhorias de rede e de jogo:
   - Framing TCP robusto no cliente (rajada de mensagens)

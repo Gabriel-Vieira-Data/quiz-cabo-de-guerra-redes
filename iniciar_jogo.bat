@@ -1,11 +1,10 @@
 @echo off
 REM ============================================================
 REM  Quiz Cabo de Guerra - Inicializador automatico (Windows)
-REM  Abre o servidor + 2 clientes (Alice e Bob) em janelas
+REM  Abre o servidor + 2 clientes (Alice e Bruno) em janelas
 REM  separadas, sem precisar digitar comandos manualmente.
 REM
-REM  [Origem: IA] Script inteiro escrito com auxilio de IA
-REM  (ver USO_DE_IA.md).
+REM  [Origem: IA] Script inteiro escrito com auxilio de IA.
 REM ============================================================
 
 title Quiz Cabo de Guerra - Launcher
@@ -69,16 +68,16 @@ REM ---- Inicia o CLIENTE 1 (Alice) ----------------------------
 echo Abrindo janela do Jogador 1 (Alice)...
 start "Quiz - Jogador 1 (Alice)" cmd /k ""%PYTHON%" -m src.client.gui --id-jogador player-1 --apelido Alice"
 
-REM ---- Inicia o CLIENTE 2 (Bob) ------------------------------
-echo Abrindo janela do Jogador 2 (Bob)...
-start "Quiz - Jogador 2 (Bob)" cmd /k ""%PYTHON%" -m src.client.gui --id-jogador player-2 --apelido Bob"
+REM ---- Inicia o CLIENTE 2 (Bruno) ------------------------------
+echo Abrindo janela do Jogador 2 (Bruno)...
+start "Quiz - Jogador 2 (Bruno)" cmd /k ""%PYTHON%" -m src.client.gui --id-jogador player-2 --apelido Bruno"
 
 echo.
 echo ============================================================
 echo   Tudo pronto! Tres janelas foram abertas:
 echo     - SERVIDOR (deixe aberta)
 echo     - Jogador 1 (Alice)
-echo     - Jogador 2 (Bob)
+echo     - Jogador 2 (Bruno)
 echo.
 echo   Em cada janela de jogador, clique em "Conectar".
 echo   A partida comeca automaticamente.

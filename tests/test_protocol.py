@@ -1,4 +1,4 @@
-# [Origem: autoral] Medido com git blame (ver USO_DE_IA.md).
+# [Origem: autoral] Medido com git blame.
 import json
 
 from src.common.protocol import TipoMensagem, criar_mensagem, decodificar_mensagem, codificar_mensagem

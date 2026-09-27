@@ -1,4 +1,4 @@
-# [Origem: IA] Medido com git blame (ver USO_DE_IA.md).
+# [Origem: IA] Medido com git blame.
 """
 Regressão: uma RESPOSTA com rodada_id diferente da rodada atual deve ser
 ignorada. Isso evita que uma resposta atrasada (por latência) da rodada

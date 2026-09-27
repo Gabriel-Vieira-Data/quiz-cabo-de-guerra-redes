@@ -1,4 +1,4 @@
-# [Origem: IA] Medido com git blame (ver USO_DE_IA.md).
+# [Origem: IA] Medido com git blame.
 """
 Regressão: se um jogador acerta e o outro NÃO responde, ao estourar o tempo
 da rodada quem acertou deve pontuar (o timeout não pode zerar a rodada).

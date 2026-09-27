@@ -94,4 +94,6 @@ python -m pytest -q
 
 ## Uso de IA
 
-Veja `USO_DE_IA.md`.
+Parte do código foi escrita com auxílio de IA. A origem de cada classe e
+função está indicada no próprio código com comentários `# [Origem: IA]`,
+`# [Origem: autoral]` ou com a porcentagem de cada um (medido com `git blame`).

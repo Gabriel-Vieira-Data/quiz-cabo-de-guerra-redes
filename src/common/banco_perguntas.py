@@ -5,7 +5,7 @@ Cada pergunta é um dict: {"pergunta": str, "opcoes": [str x4], "resposta_corret
 Tenta carregar de data/perguntas_redes.json; se o arquivo não existir, usa um
 banco embutido (_perguntas_padrao) — assim o jogo funciona sem configuração.
 
-Marcação de origem (ver USO_DE_IA.md): "# [Origem: ...]" acima de cada
+Marcação de origem: "# [Origem: ...]" acima de cada
 classe/função — "IA" = escrito com auxílio de IA; "autoral" = escrito pelos
 integrantes sem IA (medido com git blame).
 """

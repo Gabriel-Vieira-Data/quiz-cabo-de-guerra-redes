@@ -1,4 +1,4 @@
-# [Origem: IA 62% · autoral 38%] Medido com git blame (ver USO_DE_IA.md).
+# [Origem: IA 62% · autoral 38%] Medido com git blame.
 from src.common.game_logic import EstadoJogo
 
 

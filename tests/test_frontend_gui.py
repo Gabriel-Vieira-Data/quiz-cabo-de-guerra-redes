@@ -1,4 +1,4 @@
-# [Origem: autoral 77% · IA 23%] Medido com git blame (ver USO_DE_IA.md).
+# [Origem: autoral 77% · IA 23%] Medido com git blame.
 import json
 
 from src.client.client import ClienteQuiz

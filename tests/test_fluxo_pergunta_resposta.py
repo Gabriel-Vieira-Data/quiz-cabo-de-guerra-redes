@@ -1,4 +1,4 @@
-# [Origem: IA 89% · autoral 11%] Medido com git blame (ver USO_DE_IA.md).
+# [Origem: IA 89% · autoral 11%] Medido com git blame.
 import threading
 
 from src.client.client import ClienteQuiz
