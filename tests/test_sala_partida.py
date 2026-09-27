@@ -1,4 +1,4 @@
-# [Origem: autoral 57% · IA 43%] Medido com git blame.
+# [Origem: autoral 57% · IA 43%] Medido com git blame (ver USO_DE_IA.md).
 from src.server.server import ServidorQuiz
 
 

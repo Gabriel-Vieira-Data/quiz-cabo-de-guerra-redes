@@ -1,4 +1,4 @@
-# [Origem: IA 88% · autoral 12%] Medido com git blame.
+# [Origem: IA 88% · autoral 12%] Medido com git blame (ver USO_DE_IA.md).
 import json
 import socket
 import threading

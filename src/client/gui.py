@@ -33,7 +33,7 @@ Animações: um "loop" com janela.after(FPS_MS, ...) redesenha a corda ~33
 vezes por segundo. Cada quadro calcula a posição a partir do tempo passado
 (time.monotonic), então a velocidade não depende do computador.
 
-Marcação de origem: "# [Origem: ...]" acima de cada
+Marcação de origem (ver USO_DE_IA.md): "# [Origem: ...]" acima de cada
 classe/função — "IA" = escrito com auxílio de IA; "autoral" = escrito pelos
 integrantes sem IA (medido com git blame).
 """

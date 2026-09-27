@@ -1,4 +1,4 @@
-# [Origem: IA] Medido com git blame.
+# [Origem: IA] Medido com git blame (ver USO_DE_IA.md).
 """
 Validação de integridade do banco de perguntas.
 

@@ -14,7 +14,7 @@ Fluxo de uma partida:
   4. Se o jogo terminou → envia FIM_JOGO; senão avança para próxima PERGUNTA
   5. Timeout de rodada é gerenciado por threading.Timer em background
 
-Marcação de origem:
+Marcação de origem (ver USO_DE_IA.md):
   Cada classe/função tem acima um comentário "# [Origem: ...]", medido com
   git blame: "IA" = escrito com auxílio de IA; "autoral" = escrito pelos
   integrantes sem IA. Funções mistas mostram a

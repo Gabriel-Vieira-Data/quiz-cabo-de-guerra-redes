@@ -91,7 +91,7 @@ VALORES ESPECIAIS que o cliente precisa tratar
   - apelido_vencedor == None → quando não há vencedor definido (nenhum/empate)
 
 ═══════════════════════════════════════════════════════════════════════════
-MARCAÇÃO DE ORIGEM
+MARCAÇÃO DE ORIGEM (ver USO_DE_IA.md)
 ═══════════════════════════════════════════════════════════════════════════
   "# [Origem: ...]" acima de cada classe/função: "IA" = escrito com auxílio
   de IA; "autoral" = escrito pelos integrantes sem IA (medido com git blame;

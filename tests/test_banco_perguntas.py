@@ -1,4 +1,4 @@
-# [Origem: IA 55% · autoral 45%] Medido com git blame.
+# [Origem: IA 55% · autoral 45%] Medido com git blame (ver USO_DE_IA.md).
 from src.common.banco_perguntas import BancoPerguntas
 from src.server.server import ServidorQuiz
 

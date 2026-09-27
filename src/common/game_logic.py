@@ -18,7 +18,7 @@ A partida termina quando:
   2. FIM DAS RODADAS: acabaram as 10 perguntas. Vence quem tiver a corda do seu
      lado (posicao != 0); se estiver exatamente no centro, é empate.
 
-Marcação de origem: "# [Origem: ...]" acima de cada
+Marcação de origem (ver USO_DE_IA.md): "# [Origem: ...]" acima de cada
 classe/função — "IA" = escrito com auxílio de IA; "autoral" = escrito pelos
 integrantes sem IA (medido com git blame).
 """

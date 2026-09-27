@@ -1,4 +1,4 @@
-# [Origem: autoral 62% · IA 38%] Medido com git blame.
+# [Origem: autoral 62% · IA 38%] Medido com git blame (ver USO_DE_IA.md).
 import threading
 import time
 
