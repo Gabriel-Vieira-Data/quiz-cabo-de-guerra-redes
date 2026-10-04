@@ -82,7 +82,7 @@ DESCONEXAO  Avisos sobre a conexão dos jogadores — inspecione "motivo":
                 { ..., "motivo": "tempo_esgotado" }
             (d) Ninguém entrou a tempo (timeout de espera):
                 { "tipo": "DESCONEXAO", "id_jogador": "servidor",
-                  "motivo": "timeout_espera", "mensagem": str, "codigo_sala": str }
+                  "motivo": "timeout_espera", "mensagem": str, "codigo_sala": None }
 
 ── Servidor → Cliente (UDP) ───────────────────────────────────────────────
 

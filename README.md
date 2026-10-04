@@ -51,6 +51,8 @@ Para jogar em computadores diferentes, passe o IP do servidor com `--host`.
   pergunta é reenviada aos dois. Se não voltar a tempo, a partida é encerrada. Se os dois
   caírem, cada um tem os seus 30 segundos.
 - Ao fim da partida, **Jogar novamente** recomeça sem reconectar (quando os dois clicarem).
+- Várias partidas podem acontecer ao mesmo tempo: a cada dois jogadores que entram,
+  o servidor cria uma sala nova (`sala-1`, `sala-2`...) sem mexer nas que já estão em andamento.
 
 **Atalhos de teclado:** teclas `1`–`4` selecionam a opção e `Enter` envia a resposta.
 

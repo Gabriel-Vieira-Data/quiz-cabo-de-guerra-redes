@@ -135,7 +135,7 @@ class ServidorQuiz:
             if id_jogador not in self.fila_espera:
                 self.fila_espera.append(id_jogador)
 
-    # [Origem: autoral 59% · IA 41%]
+    # [Origem: autoral 67% · IA 33%]
     def criar_sala_para_espera(self) -> dict | None:
         with self._lock:
             # Só forma uma sala quando há PELO MENOS 2 jogadores NA FILA, e
@@ -143,13 +143,11 @@ class ServidorQuiz:
             if len(self.fila_espera) < 2:
                 return None
 
-            # Remove qualquer sala anterior (sem desconectar jogadores ativos).
-            for codigo_sala in list(self.salas.keys()):
-                self._limpar_sala(codigo_sala)
-
+            # Cada dupla ganha a sua própria sala; as partidas que já estão
+            # em andamento continuam (várias partidas ao mesmo tempo).
             jogadores = self.fila_espera[:2]
             self.fila_espera = self.fila_espera[2:]
-            codigo_sala = "sala-1"
+            codigo_sala = self._gerar_codigo_sala()
 
             self.salas[codigo_sala] = {
                 "codigo": codigo_sala,
@@ -159,6 +157,17 @@ class ServidorQuiz:
             }
             self.perguntas_usadas_por_sala[codigo_sala] = set()
             return self.salas[codigo_sala]
+
+    # [Origem: IA]
+    def _gerar_codigo_sala(self) -> str:
+        """
+        Devolve o menor código "sala-N" que não está em uso. Salas em andamento
+        nunca são reaproveitadas; o número de uma sala encerrada volta a ficar livre.
+        """
+        numero = 1
+        while f"sala-{numero}" in self.salas:
+            numero += 1
+        return f"sala-{numero}"
 
     # [Origem: IA]
     def _limpar_sala(self, codigo_sala: str):
@@ -324,6 +333,21 @@ class ServidorQuiz:
             # Atualiza o apelido caso o jogador tenha trocado.
             if apelido:
                 self.apelidos[id_jogador] = apelido
+            # Já está jogando numa sala: não volta para a fila (com várias
+            # salas, isso o colocaria em duas partidas ao mesmo tempo).
+            sala_atual = self._obter_codigo_sala_do_jogador(id_jogador)
+            if sala_atual is not None:
+                self._enviar_mensagem_socket(
+                    socket_remetente,
+                    TipoMensagem.BEM_VINDO,
+                    {
+                        "id_jogador": id_jogador,
+                        "apelido": self.apelidos.get(id_jogador, id_jogador),
+                        "em_partida": True,
+                        "codigo_sala": sala_atual,
+                    },
+                )
+                return self.salas[sala_atual]
         else:
             # Jogador novo: o servidor é a autoridade sobre o id (renomeia em colisão).
             id_jogador = id_livre
@@ -353,7 +377,7 @@ class ServidorQuiz:
             )
 
         if em_partida:
-            self._cancelar_timers_espera()
+            self._cancelar_timers_espera(sala["jogadores"])
             self.iniciar_partida_em_sala(sala["codigo"])
             self._iniciar_primeira_rodada(sala["codigo"])
             # Retorna a sala diretamente (contratos de teste dependem disso).
@@ -379,7 +403,7 @@ class ServidorQuiz:
                             "id_jogador": "servidor",
                             "motivo": "timeout_espera",
                             "mensagem": "Nenhum adversário entrou a tempo. Tente novamente.",
-                            "codigo_sala": "sala-1",
+                            "codigo_sala": None,
                         },
                     )
                     self.fila_espera = [j for j in self.fila_espera if j != id_jogador]
@@ -391,10 +415,12 @@ class ServidorQuiz:
         self._timers_espera[id_jogador] = timer
 
     # [Origem: IA]
-    def _cancelar_timers_espera(self):
-        for timer in self._timers_espera.values():
-            timer.cancel()
-        self._timers_espera.clear()
+    def _cancelar_timers_espera(self, jogadores: list[str]):
+        """Cancela a espera por adversário só dos jogadores que acabaram de formar sala."""
+        for id_jogador in jogadores:
+            timer = self._timers_espera.pop(id_jogador, None)
+            if timer is not None:
+                timer.cancel()
 
     # [Origem: IA]
     def _handle_resposta(self, mensagem: dict, socket_remetente=None):

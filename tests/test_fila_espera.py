@@ -1,4 +1,4 @@
-# [Origem: autoral 70% · IA 30%] Medido com git blame (ver USO_DE_IA.md).
+# [Origem: autoral 68% · IA 32%] Medido com git blame (ver USO_DE_IA.md).
 from src.server.server import ServidorQuiz
 
 
@@ -34,7 +34,7 @@ def test_servidor_cria_sala_automaticamente_ao_registrar_segundo_jogador():
     assert servidor.fila_espera == []
 
 
-def test_servidor_permite_apenas_uma_sala_ativa_por_vez():
+def test_servidor_cria_nova_sala_sem_apagar_a_que_esta_em_andamento():
     servidor = ServidorQuiz()
 
     _entrar(servidor, "player-1", object())
@@ -45,8 +45,11 @@ def test_servidor_permite_apenas_uma_sala_ativa_por_vez():
     sala_nova = servidor.criar_sala_para_espera()
 
     assert sala_nova is not None
-    assert len(servidor.salas) == 1
+    assert sala_nova["codigo"] == "sala-2"
     assert sala_nova["jogadores"] == ["player-3", "player-4"]
+    # A partida que já estava em andamento continua intacta.
+    assert servidor.salas["sala-1"]["jogadores"] == ["player-1", "player-2"]
+    assert "sala-1" in servidor.partidas_ativas
 
 
 def test_servidor_gera_id_unico_quando_o_mesmo_identificador_é_usado_duas_vezes():

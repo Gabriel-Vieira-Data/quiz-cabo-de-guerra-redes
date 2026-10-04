@@ -21,9 +21,9 @@ não vazias; linhas que são só comentário (`# ...`) não entram:
 
 | Parte | Linhas | Escrito com IA | Autoral |
 |---|---|---|---|
-| Código da aplicação (`src/` + `iniciar_jogo.bat`) | 2890 | 83,4% | 16,6% |
-| Testes automatizados (`tests/`) | 1197 | 70,7% | 29,3% |
-| Documentação e dados | 346 | 52,6% | 47,4% |
+| Código da aplicação (`src/` + `iniciar_jogo.bat`) | 2912 | 83,5% | 16,5% |
+| Testes automatizados (`tests/`) | 1284 | 72,8% | 27,2% |
+| Documentação e dados (`README.md`, `USO_DE_IA.md`, `data/`) | 359 | 54,3% | 45,7% |
 
 Linhas originais que foram depois modificadas pela IA contam como "escrito com IA".
 
@@ -47,8 +47,8 @@ que foram gerados com auxílio de IA e estão somados na coluna "Escrito com IA"
   botões, atalhos de teclado, retângulos arredondados, timeout de leitura nos
   sockets e limite de tamanho das mensagens.
 - **Regras e decisões de design** passadas à IA: vitória por diferença de 3
-  (cabo de guerra real), limite de 10 tipos de mensagem, sem partidas
-  simultâneas, nome obrigatório com limite de 20 caracteres, rematch sem
+  (cabo de guerra real), limite de 10 tipos de mensagem, várias partidas
+  simultâneas com uma sala por dupla (no início era uma partida por vez), nome obrigatório com limite de 20 caracteres, rematch sem
   reconectar, embaralhamento das opções, animações de fim de jogo, uso das
   mensagens UDP (PING/PONG) na interface.
 - **Testes manuais e relato de bugs**, que guiaram as correções:
@@ -79,7 +79,7 @@ No código, estão marcados com `# [IA - base inicial]`:
   e os blocos `with self._lock` em `src/server/server.py`.
 - **Herança `class TipoMensagem(str, Enum)`** em `src/common/protocol.py`.
 
-### Servidor — `src/server/server.py` (786 de 876 linhas, incluindo os trechos acima)
+### Servidor — `src/server/server.py` (808 de 898 linhas, incluindo os trechos acima)
 - Integração do estado do jogo com o servidor (placar, posição da corda, fim de jogo).
 - Mensagens `BEM_VINDO`, `ATUALIZAR_BARRA` e `FIM_JOGO` no fluxo real.
 - Validação de `rodada_id` para descartar respostas atrasadas.
@@ -91,6 +91,8 @@ No código, estão marcados com `# [IA - base inicial]`:
 - Pausa de 2 s entre as rodadas.
 - Espera de 30 s por reconexão (cronômetro por jogador ausente), volta à
   partida pelo mesmo id e encerramento quando o tempo acaba.
+- Várias partidas ao mesmo tempo: cada dupla ganha uma sala nova (`sala-1`,
+  `sala-2`...) sem apagar as que estão em andamento.
 
 ### Cliente de rede — `src/client/client.py` (141 de 163 linhas, incluindo os trechos acima)
 - Leitura resiliente de mensagens TCP.
@@ -116,7 +118,8 @@ No código, estão marcados com `# [IA - base inicial]`:
 ### Outros
 - `iniciar_jogo.bat` (script para abrir servidor e clientes).
 - Testes novos: `test_melhorias_rede_jogo.py`, `test_bug_rodada_atrasada.py`,
-  `test_timeout_com_acerto.py`, `test_validacao_perguntas.py`, `test_reconexao.py`, a nova versão de
+  `test_timeout_com_acerto.py`, `test_validacao_perguntas.py`, `test_reconexao.py`,
+  `test_salas_simultaneas.py`, a nova versão de
   `test_ping_udp.py` e `test_fluxo_pergunta_resposta.py`, e ajustes nos existentes.
 - Documentação: a maior parte do `README.md`.
 - Limpeza: remoção de código sem uso e de funções que existiam só para testes
