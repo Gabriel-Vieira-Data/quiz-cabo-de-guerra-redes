@@ -221,8 +221,10 @@ def test_servidor_notifica_adversario_ao_cair_conexao():
     assert desconexoes, "player-2 deveria receber DESCONEXAO"
     assert desconexoes[-1]["id_jogador"] == "player-1"
     assert desconexoes[-1]["apelido"] == "Alice"
-    # A sala foi limpa
-    assert "sala-1" not in servidor.salas
+    # A partida NÃO acaba na hora: fica em espera para o jogador voltar.
+    assert desconexoes[-1]["motivo"] == "aguardando_reconexao"
+    assert "sala-1" in servidor.salas
+    servidor.fechar_servidor()
 
 
 # ---------------------------------------------------------------------------

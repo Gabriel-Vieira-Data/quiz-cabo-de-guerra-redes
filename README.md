@@ -45,6 +45,11 @@ Para jogar em computadores diferentes, passe o IP do servidor com `--host`.
   **3 de vantagem**, ele vence na hora.
 - Se as 10 rodadas acabarem, vence quem estiver com a corda do seu lado; com a
   corda no centro, desempata por pontos ou termina empatado.
+- Depois de cada pergunta, a resposta correta fica na tela por 2 segundos antes da próxima.
+- Se um jogador cair no meio da partida, ela fica **em espera por 30 segundos**. Ele volta
+  clicando em **Reconectar** (ou abrindo o jogo de novo com o mesmo `--id-jogador`) e a
+  pergunta é reenviada aos dois. Se não voltar a tempo, a partida é encerrada. Se os dois
+  caírem, cada um tem os seus 30 segundos.
 - Ao fim da partida, **Jogar novamente** recomeça sem reconectar (quando os dois clicarem).
 
 **Atalhos de teclado:** teclas `1`–`4` selecionam a opção e `Enter` envia a resposta.

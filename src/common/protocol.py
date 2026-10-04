@@ -42,9 +42,11 @@ PING        Medição de latência, enviada pela interface a cada 2 s.
 
 BEM_VINDO   Confirmação de ENTRAR. Informa o id DEFINITIVO do jogador (o
             servidor pode ter renomeado em caso de colisão) e se ele já está
-            em partida ou aguardando adversário.
+            em partida ou aguardando adversário. "reconectado" só vem (true)
+            quando o jogador voltou para uma partida que estava em espera.
             { "tipo": "BEM_VINDO", "id_jogador": str, "apelido": str,
-              "em_partida": bool, "codigo_sala": str | None }
+              "em_partida": bool, "codigo_sala": str | None,
+              "reconectado": bool (opcional) }
 
 PERGUNTA    Início de uma rodada. NÃO contém a resposta correta (anti-trapaça).
             Leva também nomes e placar, para a tela já mostrar tudo na 1ª rodada.
@@ -69,11 +71,16 @@ FIM_JOGO    Partida encerrada. "vencedor" pode ser um id OU "empate".
               "apelido_vencedor": str | None, "pontuacao": {id: int},
               "posicao": int, "apelidos": {id: str} }
 
-DESCONEXAO  Dois casos distintos — inspecione "motivo"/"id_jogador":
-            (a) Adversário caiu:
+DESCONEXAO  Avisos sobre a conexão dos jogadores — inspecione "motivo":
+            (a) Adversário caiu; a partida fica em espera por "tempo_espera" s:
                 { "tipo": "DESCONEXAO", "id_jogador": str, "apelido": str,
-                  "codigo_sala": str }
-            (b) Ninguém entrou a tempo (timeout de espera):
+                  "codigo_sala": str, "motivo": "aguardando_reconexao",
+                  "tempo_espera": int }
+            (b) O jogador que caiu voltou (a partida continua):
+                { ..., "motivo": "reconectado" }
+            (c) Ele não voltou a tempo; a partida foi encerrada:
+                { ..., "motivo": "tempo_esgotado" }
+            (d) Ninguém entrou a tempo (timeout de espera):
                 { "tipo": "DESCONEXAO", "id_jogador": "servidor",
                   "motivo": "timeout_espera", "mensagem": str, "codigo_sala": str }
 

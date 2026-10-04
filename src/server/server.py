@@ -39,9 +39,9 @@ from src.common.protocol import (
 )
 
 
-# [Origem: IA 90% · autoral 10%]
+# [Origem: IA]
 class ServidorQuiz:
-    # [Origem: autoral 57% · IA 43%]
+    # [Origem: IA 56% · autoral 44%]
     def __init__(self, host: str = "0.0.0.0", porta_tcp: int = 5000, porta_udp: int = 5001):
         self.host = host
         self.porta_tcp = porta_tcp
@@ -76,10 +76,19 @@ class ServidorQuiz:
         self._timers_timeout: dict[str, threading.Timer] = {}
 
         self.banco_perguntas = BancoPerguntas()
+        self.banco_perguntas = BancoPerguntas()
         self.tempo_limite_rodada = 30
+        # Pausa entre o fim de uma rodada e a próxima pergunta, para os
+        # jogadores verem qual era a resposta correta.
+        self.pausa_entre_rodadas = 2.0
+
+        # Reconexão: quando um jogador cai no meio da partida, ela fica em
+        # espera por tempo_reconexao segundos. Cada ausente tem seu próprio
+        # cronômetro: { id_jogador: {"timer", "sala", "inicio"} }.
+        self.tempo_reconexao = 30
+        self._ausentes: dict[str, dict] = {}
 
         self._servidor_ativo = False
-
     # -----------------------------------------------------------------------
     # Identificação de jogadores
     # -----------------------------------------------------------------------
@@ -154,6 +163,11 @@ class ServidorQuiz:
     # [Origem: IA]
     def _limpar_sala(self, codigo_sala: str):
         self._cancelar_timer_timeout(codigo_sala)
+        # Cancela a espera de reconexão de quem era desta sala.
+        for id_ausente, info in list(self._ausentes.items()):
+            if info["sala"] == codigo_sala:
+                info["timer"].cancel()
+                del self._ausentes[id_ausente]
         self.salas.pop(codigo_sala, None)
         self.partidas_ativas.pop(codigo_sala, None)
         self.estado_por_sala.pop(codigo_sala, None)
@@ -295,6 +309,16 @@ class ServidorQuiz:
         if socket_remetente is not None:
             id_existente = self.socket_para_jogador.get(id(socket_remetente))
 
+        # ── Volta de um jogador que caiu no meio da partida ──────────────────
+        # Se o id pertence a alguém que está sendo esperado, ele recupera o
+        # lugar dele na sala em vez de entrar na fila como jogador novo.
+        if id_existente is None:
+            if id_jogador in self._ausentes:
+                return self._reconectar_jogador(id_jogador, apelido, socket_remetente)
+            id_livre = self._gerar_id_jogador_disponivel(id_jogador)
+            if id_livre in self._ausentes:
+                return self._reconectar_jogador(id_livre, apelido, socket_remetente)
+
         if id_existente is not None:
             id_jogador = id_existente
             # Atualiza o apelido caso o jogador tenha trocado.
@@ -302,7 +326,7 @@ class ServidorQuiz:
                 self.apelidos[id_jogador] = apelido
         else:
             # Jogador novo: o servidor é a autoridade sobre o id (renomeia em colisão).
-            id_jogador = self._gerar_id_jogador_disponivel(id_jogador)
+            id_jogador = id_livre
             if socket_remetente is not None:
                 self.jogadores_conectados[id_jogador] = socket_remetente
                 # Mapeia o socket → id para validar respostas (anti-trapaça).
@@ -420,18 +444,8 @@ class ServidorQuiz:
         pergunta = self.selecionar_pergunta_para_sala(codigo_sala)
         estado = self.estado_por_sala.get(codigo_sala)
         rodada_id = estado.rodada_atual if estado else 1
-        apelidos, pontuacao, posicao = self._apelidos_e_placar_da_sala(codigo_sala)
-        # NÃO envia resposta_correta ao cliente — a validação é só no servidor.
-        # Inclui apelidos/pontuacao para o cliente exibir os nomes já na 1ª rodada.
-        payload = {
-            "rodada_id": rodada_id,
-            "pergunta": pergunta["pergunta"],
-            "opcoes": pergunta["opcoes"],
-            "tempo_limite": self.tempo_limite_rodada,
-            "apelidos": apelidos,
-            "pontuacao": pontuacao,
-            "posicao": posicao,
-        }
+        # Os nomes já vão na 1ª PERGUNTA para a tela mostrá-los desde o começo.
+        payload = self._payload_pergunta(codigo_sala, pergunta, rodada_id)
         self.enviar_pergunta_para_sala(codigo_sala, payload)
         self._agendar_timeout_rodada(codigo_sala)
 
@@ -463,6 +477,10 @@ class ServidorQuiz:
                 return None
 
             if estado_rodada.get("concluida"):
+                return None
+
+            # Partida em espera (alguém caiu): ninguém responde até ela voltar.
+            if estado_rodada.get("pausada"):
                 return None
 
             # Ignorar resposta de uma rodada que não é a atual.
@@ -564,8 +582,11 @@ class ServidorQuiz:
                 return
             estado.avancar_rodada()
 
-        # Agenda próxima rodada com delay mínimo para que FIM_RODADA chegue antes de PERGUNTA
-        timer = threading.Timer(0.05, self._iniciar_proxima_rodada, args=(codigo_sala,))
+        # Espera pausa_entre_rodadas (2 s) antes da próxima pergunta, para os
+        # jogadores verem na tela qual era a resposta correta.
+        timer = threading.Timer(
+            self.pausa_entre_rodadas, self._iniciar_proxima_rodada, args=(codigo_sala,)
+        )
         timer.daemon = True
         timer.start()
 
@@ -580,26 +601,39 @@ class ServidorQuiz:
             if not estado or estado.vencedor:
                 return
 
+            # Alguém caiu durante a pausa entre rodadas: a próxima pergunta só
+            # sai quando todos voltarem (ver _retomar_partida).
+            if self._sala_tem_ausentes(codigo_sala):
+                sala["proxima_pendente"] = True
+                return
+
             partida = self.partidas_ativas.get(codigo_sala)
             if partida:
                 partida["rodada"] = estado.rodada_atual
             sala["rodada_atual"] = estado.rodada_atual
 
             pergunta = self.selecionar_pergunta_para_sala(codigo_sala)
-            apelidos, pontuacao, posicao = self._apelidos_e_placar_da_sala(codigo_sala)
-            # NÃO envia resposta_correta ao cliente.
-            payload = {
-                "rodada_id": estado.rodada_atual,
-                "pergunta": pergunta["pergunta"],
-                "opcoes": pergunta["opcoes"],
-                "tempo_limite": self.tempo_limite_rodada,
-                "apelidos": apelidos,
-                "pontuacao": pontuacao,
-                "posicao": posicao,
-            }
+            payload = self._payload_pergunta(codigo_sala, pergunta, estado.rodada_atual)
             self.enviar_pergunta_para_sala(codigo_sala, payload)
 
         self._agendar_timeout_rodada(codigo_sala)
+
+    # [Origem: IA]
+    def _payload_pergunta(self, codigo_sala: str, pergunta: dict, rodada_id: int) -> dict:
+        """
+        Monta o conteúdo da mensagem PERGUNTA. NÃO inclui resposta_correta
+        (anti-trapaça); leva nomes e placar para a tela ficar atualizada.
+        """
+        apelidos, pontuacao, posicao = self._apelidos_e_placar_da_sala(codigo_sala)
+        return {
+            "rodada_id": rodada_id,
+            "pergunta": pergunta["pergunta"],
+            "opcoes": pergunta["opcoes"],
+            "tempo_limite": self.tempo_limite_rodada,
+            "apelidos": apelidos,
+            "pontuacao": pontuacao,
+            "posicao": posicao,
+        }
 
     # [Origem: IA]
     def _enviar_fim_jogo(self, codigo_sala: str, vencedor: str, estado: EstadoJogo | None):
@@ -688,6 +722,8 @@ class ServidorQuiz:
             estado_rodada = self.rodadas_por_sala.get(codigo_sala)
             if estado_rodada is None or estado_rodada.get("concluida"):
                 return
+            if estado_rodada.get("pausada"):
+                return  # partida em espera: o tempo da rodada não corre
             estado_rodada["concluida"] = True
 
             # Determina o vencedor pelas respostas que chegaram até agora.
@@ -863,8 +899,12 @@ class ServidorQuiz:
     # [Origem: IA]
     def _tratar_desconexao_de_socket(self, conexao):
         """
-        Quando um socket cai, remove o jogador, avisa o adversário com DESCONEXAO
-        e encerra a partida daquela sala.
+        Quando um socket cai:
+          - fora de partida: só remove o jogador;
+          - no meio da partida: a partida entra em ESPERA. A rodada é pausada,
+            o adversário recebe DESCONEXAO (motivo "aguardando_reconexao") e
+            começa um cronômetro de tempo_reconexao (30 s) só para quem caiu.
+            Se ele voltar a tempo, a partida continua; senão, ela é encerrada.
         """
         with self._lock:
             id_desconectado = self.socket_para_jogador.pop(id(conexao), None)
@@ -882,28 +922,148 @@ class ServidorQuiz:
             self.fila_espera = [j for j in self.fila_espera if j != id_desconectado]
             print(f"[TCP] Cliente desconectado: {id_desconectado}")
 
-            # Encontra a sala do jogador e notifica os demais
             codigo_sala = self._obter_codigo_sala_do_jogador(id_desconectado)
-            if codigo_sala is not None:
-                sala = self.salas.get(codigo_sala, {})
-                for outro in list(sala.get("jogadores", [])):
-                    if outro == id_desconectado:
-                        continue
-                    sock_outro = self.jogadores_conectados.get(outro)
-                    if sock_outro is not None:
-                        self._enviar_mensagem_socket(
-                            sock_outro,
-                            TipoMensagem.DESCONEXAO,
-                            {
-                                "id_jogador": id_desconectado,
-                                "apelido": self.apelidos.get(id_desconectado, id_desconectado),
-                                "codigo_sala": codigo_sala,
-                            },
-                        )
-                # Encerra a partida da sala
-                self._cancelar_timer_timeout(codigo_sala)
+            if codigo_sala is None:
+                return
+            if codigo_sala not in self.partidas_ativas:
+                # Sala que ainda nem começou: não há partida para esperar.
                 self._limpar_sala(codigo_sala)
-                print(f"[SERVIDOR] Partida em {codigo_sala} encerrada por desconexão de {id_desconectado}")
+                return
+
+            self._pausar_rodada(codigo_sala)
+            self._agendar_espera_reconexao(id_desconectado, codigo_sala)
+            self._avisar_sala(codigo_sala, id_desconectado, {
+                "id_jogador": id_desconectado,
+                "apelido": self.apelidos.get(id_desconectado, id_desconectado),
+                "codigo_sala": codigo_sala,
+                "motivo": "aguardando_reconexao",
+                "tempo_espera": self.tempo_reconexao,
+            })
+            print(f"[SERVIDOR] Partida em {codigo_sala} em espera: aguardando "
+                  f"{id_desconectado} voltar ({self.tempo_reconexao}s)")
+
+    # [Origem: IA]
+    def _avisar_sala(self, codigo_sala: str, exceto: str | None, dados: dict):
+        """Envia DESCONEXAO a todos os jogadores conectados da sala, menos `exceto`."""
+        sala = self.salas.get(codigo_sala, {})
+        for id_jogador in sala.get("jogadores", []):
+            if id_jogador == exceto:
+                continue
+            sock = self.jogadores_conectados.get(id_jogador)
+            if sock is not None:
+                self._enviar_mensagem_socket(sock, TipoMensagem.DESCONEXAO, dados)
+
+    # [Origem: IA]
+    def _sala_tem_ausentes(self, codigo_sala: str) -> bool:
+        return any(info["sala"] == codigo_sala for info in self._ausentes.values())
+
+    # [Origem: IA]
+    def _pausar_rodada(self, codigo_sala: str):
+        """Para o cronômetro da rodada e bloqueia respostas até a partida voltar."""
+        self._cancelar_timer_timeout(codigo_sala)
+        estado_rodada = self.rodadas_por_sala.get(codigo_sala)
+        if estado_rodada is not None and not estado_rodada.get("concluida"):
+            estado_rodada["pausada"] = True
+
+    # [Origem: IA]
+    def _agendar_espera_reconexao(self, id_jogador: str, codigo_sala: str):
+        """Liga o cronômetro de 30 s deste jogador. Cada ausente tem o seu."""
+        anterior = self._ausentes.pop(id_jogador, None)
+        if anterior is not None:
+            anterior["timer"].cancel()
+        timer = threading.Timer(
+            self.tempo_reconexao, self._encerrar_por_ausencia, args=(id_jogador, codigo_sala)
+        )
+        timer.daemon = True
+        self._ausentes[id_jogador] = {"timer": timer, "sala": codigo_sala, "inicio": time.time()}
+        timer.start()
+
+    # [Origem: IA]
+    def _encerrar_por_ausencia(self, id_jogador: str, codigo_sala: str):
+        """Os 30 s de um ausente acabaram: a partida é encerrada."""
+        with self._lock:
+            if self._ausentes.pop(id_jogador, None) is None:
+                return  # ele voltou a tempo
+            if codigo_sala not in self.salas:
+                return
+            self._avisar_sala(codigo_sala, id_jogador, {
+                "id_jogador": id_jogador,
+                "apelido": self.apelidos.get(id_jogador, id_jogador),
+                "codigo_sala": codigo_sala,
+                "motivo": "tempo_esgotado",
+            })
+            self._limpar_sala(codigo_sala)  # cancela também a espera dos outros ausentes
+            print(f"[SERVIDOR] Partida em {codigo_sala} encerrada: {id_jogador} não voltou a tempo")
+
+    # [Origem: IA]
+    def _reconectar_jogador(self, id_jogador: str, apelido: str | None, socket_remetente):
+        """
+        Um jogador que caiu voltou (ENTRAR com o mesmo id): ele recupera o
+        lugar na sala, o adversário é avisado e, se ninguém mais estiver
+        ausente, a partida continua de onde parou.
+        """
+        info = self._ausentes.pop(id_jogador)
+        info["timer"].cancel()
+        codigo_sala = info["sala"]
+        if socket_remetente is not None:
+            self.jogadores_conectados[id_jogador] = socket_remetente
+            self.socket_para_jogador[id(socket_remetente)] = id_jogador
+        if apelido:
+            self.apelidos[id_jogador] = apelido
+        print(f"[SERVIDOR] {id_jogador} voltou para a partida em {codigo_sala}")
+
+        if socket_remetente is not None:
+            self._enviar_mensagem_socket(socket_remetente, TipoMensagem.BEM_VINDO, {
+                "id_jogador": id_jogador,
+                "apelido": self.apelidos[id_jogador],
+                "em_partida": True,
+                "reconectado": True,
+                "codigo_sala": codigo_sala,
+            })
+        self._avisar_sala(codigo_sala, id_jogador, {
+            "id_jogador": id_jogador,
+            "apelido": self.apelidos[id_jogador],
+            "codigo_sala": codigo_sala,
+            "motivo": "reconectado",
+        })
+
+        if self._sala_tem_ausentes(codigo_sala):
+            # O outro jogador também caiu: quem voltou fica sabendo quanto falta.
+            for outro, outro_info in self._ausentes.items():
+                if outro_info["sala"] == codigo_sala and socket_remetente is not None:
+                    restante = self.tempo_reconexao - (time.time() - outro_info["inicio"])
+                    self._enviar_mensagem_socket(socket_remetente, TipoMensagem.DESCONEXAO, {
+                        "id_jogador": outro,
+                        "apelido": self.apelidos.get(outro, outro),
+                        "codigo_sala": codigo_sala,
+                        "motivo": "aguardando_reconexao",
+                        "tempo_espera": max(0, round(restante)),
+                    })
+        else:
+            self._retomar_partida(codigo_sala)
+        return self.salas.get(codigo_sala)
+
+    # [Origem: IA]
+    def _retomar_partida(self, codigo_sala: str):
+        """
+        Todos voltaram. Se a espera começou no meio de uma pergunta, ela é
+        reenviada com o tempo cheio e sem as respostas antigas. Se começou na
+        pausa entre rodadas, a próxima pergunta é enviada agora.
+        """
+        sala = self.salas.get(codigo_sala)
+        if not sala:
+            return
+        if sala.pop("proxima_pendente", False):
+            self._iniciar_proxima_rodada(codigo_sala)
+            return
+        estado_rodada = self.rodadas_por_sala.get(codigo_sala)
+        if not estado_rodada or not estado_rodada.get("pausada"):
+            return  # a rodada já tinha acabado; o timer da próxima segue normal
+        estado_rodada.update(pausada=False, respostas={}, inicio=time.time())
+        pergunta = self.perguntas_rodada.get(codigo_sala, {})
+        payload = self._payload_pergunta(codigo_sala, pergunta, estado_rodada["rodada_id"])
+        self.enviar_pergunta_para_sala(codigo_sala, payload)
+        self._agendar_timeout_rodada(codigo_sala)
 
     # [Origem: autoral 50% · IA 50%]
     def escutar_cliente(self, conexao):
@@ -1022,11 +1182,14 @@ class ServidorQuiz:
         self.socket_udp.settimeout(0.2)
         print(f"[UDP] Servidor ouvindo em {self.host}:{self.porta_udp}")
 
-    # [Origem: IA 82% · autoral 18%]
+    # [Origem: IA 85% · autoral 15%]
     def fechar_servidor(self):
         self._servidor_ativo = False
         for codigo_sala in list(self._timers_timeout.keys()):
             self._cancelar_timer_timeout(codigo_sala)
+        for info in list(self._ausentes.values()):
+            info["timer"].cancel()
+        self._ausentes.clear()
         for sock in list(self.jogadores_conectados.values()):
             try:
                 sock.close()

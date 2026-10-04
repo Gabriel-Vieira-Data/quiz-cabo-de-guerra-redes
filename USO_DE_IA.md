@@ -21,9 +21,9 @@ não vazias; linhas que são só comentário (`# ...`) não entram:
 
 | Parte | Linhas | Escrito com IA | Autoral |
 |---|---|---|---|
-| Código da aplicação (`src/` + `iniciar_jogo.bat`) | 2712 | 82,2% | 17,8% |
-| Testes automatizados (`tests/`) | 1085 | 67,6% | 32,4% |
-| Documentação e dados | 341 | 51,9% | 48,1% |
+| Código da aplicação (`src/` + `iniciar_jogo.bat`) | 2890 | 83,4% | 16,6% |
+| Testes automatizados (`tests/`) | 1197 | 70,7% | 29,3% |
+| Documentação e dados | 346 | 52,6% | 47,4% |
 
 Linhas originais que foram depois modificadas pela IA contam como "escrito com IA".
 
@@ -79,7 +79,7 @@ No código, estão marcados com `# [IA - base inicial]`:
   e os blocos `with self._lock` em `src/server/server.py`.
 - **Herança `class TipoMensagem(str, Enum)`** em `src/common/protocol.py`.
 
-### Servidor — `src/server/server.py` (655 de 746 linhas, incluindo os trechos acima)
+### Servidor — `src/server/server.py` (786 de 876 linhas, incluindo os trechos acima)
 - Integração do estado do jogo com o servidor (placar, posição da corda, fim de jogo).
 - Mensagens `BEM_VINDO`, `ATUALIZAR_BARRA` e `FIM_JOGO` no fluxo real.
 - Validação de `rodada_id` para descartar respostas atrasadas.
@@ -88,6 +88,9 @@ No código, estão marcados com `# [IA - base inicial]`:
 - Correção do registro do socket (id renomeado), `SO_KEEPALIVE`, limites de tamanho de campos.
 - Embaralhamento das opções e limite de 20 caracteres no apelido.
 - Resposta ao `PING` com `PONG` pelo UDP.
+- Pausa de 2 s entre as rodadas.
+- Espera de 30 s por reconexão (cronômetro por jogador ausente), volta à
+  partida pelo mesmo id e encerramento quando o tempo acaba.
 
 ### Cliente de rede — `src/client/client.py` (141 de 163 linhas, incluindo os trechos acima)
 - Leitura resiliente de mensagens TCP.
@@ -96,10 +99,10 @@ No código, estão marcados com `# [IA - base inicial]`:
 ### Lógica do jogo — `src/common/game_logic.py` (89 de 98 linhas)
 - Reescrita da regra de vitória para diferença de 3 (`vantagem_para_vencer`, `LIMITE_BARRA`).
 
-### Protocolo — `src/common/protocol.py` (118 de 134 linhas, incluindo os trechos acima)
+### Protocolo — `src/common/protocol.py` (125 de 141 linhas, incluindo os trechos acima)
 - Documentação do formato de cada mensagem, enum com os 10 tipos, parser resiliente.
 
-### Interface gráfica — `src/client/gui.py` (1141 de 1298 linhas)
+### Interface gráfica — `src/client/gui.py` (1201 de 1358 linhas)
 - Layout completo: cartões dos jogadores, corda desenhada em Canvas, painel da
   pergunta, barra de tempo, histórico colorido, área rolável.
 - Campo de nome obrigatório com contador e validação de 20 caracteres.
@@ -107,11 +110,13 @@ No código, estão marcados com `# [IA - base inicial]`:
 - Animações: balanço da corda, bonecos puxando, efeito elástico do nó e telas
   de vitória, derrota e empate.
 - Indicador "Ping: N ms", atualizado a cada 2 s por uma thread que envia `PING` pelo UDP.
+- Tela de espera com contagem regressiva quando o adversário cai e botão
+  "Reconectar" que devolve o jogador à partida.
 
 ### Outros
 - `iniciar_jogo.bat` (script para abrir servidor e clientes).
 - Testes novos: `test_melhorias_rede_jogo.py`, `test_bug_rodada_atrasada.py`,
-  `test_timeout_com_acerto.py`, `test_validacao_perguntas.py`, a nova versão de
+  `test_timeout_com_acerto.py`, `test_validacao_perguntas.py`, `test_reconexao.py`, a nova versão de
   `test_ping_udp.py` e `test_fluxo_pergunta_resposta.py`, e ajustes nos existentes.
 - Documentação: a maior parte do `README.md`.
 - Limpeza: remoção de código sem uso e de funções que existiam só para testes

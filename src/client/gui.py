@@ -83,6 +83,7 @@ FONTE           = "Segoe UI"  # fonte nativa do Windows, visual mais moderno
 LIMITE_NOME     = 20          # máximo de caracteres no nome do jogador
 FPS_MS          = 30          # intervalo entre quadros das animações (~33 fps)
 DURACAO_PUXADA  = 0.8         # segundos da animação de puxada da corda
+PAUSA_RESULTADO_MS = 2000     # tempo mostrando a resposta certa antes da tela final
 INTERVALO_PING_S = 2          # segundos entre um PING (UDP) e o próximo
 
 
@@ -426,7 +427,7 @@ class JanelaQuiz:
         )
         self.texto_historico.pack(fill="x", pady=(4, 0))
 
-    # [Origem: IA 88% · autoral 12%]
+    # [Origem: IA 82% · autoral 18%]
     def _centralizar_janela(self, largura: int, altura: int):
         """
         Centraliza a janela na tela e limita a altura ao espaço realmente
@@ -1033,16 +1034,29 @@ class JanelaQuiz:
             return
         self.conectado = False
         self._parar_contagem()
+        self._parar_espera()
         self._desativar_opcoes()
         self._set_status("🔌 Conexão com o servidor perdida.")
         self.botao_conectar.config(
             state="normal", text="Reconectar",
-            bg=COR_BTN_CONN, command=self._jogar_novamente,
+            bg=COR_BTN_CONN, command=self._voltar_para_partida,
         )
         messagebox.showerror(
             "Conexão perdida",
-            "A conexão com o servidor foi encerrada. Clique em 'Reconectar' para tentar de novo.",
+            "A conexão com o servidor foi encerrada. Clique em 'Reconectar' em até "
+            "30 segundos para voltar à partida.",
         )
+
+    # [Origem: IA]
+    def _voltar_para_partida(self):
+        """
+        Reconecta mantendo a tela como está. Se a partida ainda estiver em
+        espera, o servidor devolve o lugar (BEM_VINDO com reconectado=True) e
+        reenvia a pergunta; se não, _on_bem_vindo limpa a tela.
+        """
+        self._fechar_tela_final()
+        self._voltando = True
+        self._reconectar_do_zero()
 
     # ── Handlers de mensagens (executam na thread Tk) ─────────────────────
 
@@ -1059,6 +1073,14 @@ class JanelaQuiz:
         apelido = msg.get("apelido")
         if apelido:
             self.apelido = apelido
+        voltando = getattr(self, "_voltando", False)
+        self._voltando = False
+        if msg.get("reconectado"):
+            self._set_status("✅ Você voltou para a partida!")
+            return
+        if voltando:
+            # Tentou voltar, mas a partida antiga já tinha acabado: começa do zero.
+            self._resetar_ui_para_nova_partida()
         if msg.get("em_partida"):
             self._set_status("Partida encontrada! Boa sorte.")
         else:
@@ -1066,6 +1088,7 @@ class JanelaQuiz:
 
     # [Origem: IA]
     def _on_pergunta(self, msg: dict):
+        self._parar_espera()  # se a partida estava em espera, ela voltou
         self.pergunta_atual = extrair_detalhes_pergunta(msg)
         rodada_id   = self.pergunta_atual["rodada_id"]
         pergunta    = self.pergunta_atual["pergunta"]
@@ -1193,9 +1216,10 @@ class JanelaQuiz:
 
         # Placar exibido com apelidos
         placar = [f"{apelidos.get(jid, jid)}: {p} pontos" for jid, p in pontuacao.items()]
-        # Tela final animada. Espera a última puxada da corda terminar para o
-        # jogador ver o ponto decisivo.
-        atraso = int(DURACAO_PUXADA * 1000) + 200
+        # Tela final animada. Espera 2 s (como entre as rodadas) para o jogador
+        # ver a resposta certa da última pergunta e a puxada decisiva da corda.
+        self._parar_espera()
+        atraso = max(PAUSA_RESULTADO_MS, int(DURACAO_PUXADA * 1000) + 200)
         self._id_tela_final = self.janela.after(
             atraso, lambda: self._mostrar_tela_final(tipo, detalhe, placar)
         )
@@ -1227,20 +1251,70 @@ class JanelaQuiz:
             )
             return
 
-        # Desconexão do adversário durante a partida
-        if id_evento != self.id_jogador:
+        if id_evento == self.id_jogador:
+            return
+        apelido_adv = msg.get("apelido", id_evento)
+
+        # Adversário caiu: a partida fica em espera enquanto ele pode voltar.
+        if motivo == "aguardando_reconexao":
             self._parar_contagem()
             self._desativar_opcoes()
-            apelido_adv = msg.get("apelido", id_evento)
-            self._set_status(f"⚠ {apelido_adv} saiu da partida.")
-            self.botao_conectar.config(
-                state="normal", text="Jogar novamente",
-                bg=COR_BTN_CONN, command=self._jogar_novamente,
-            )
-            messagebox.showwarning(
-                "Adversário desconectado",
-                f"{apelido_adv} saiu da partida. Você pode iniciar uma nova.",
-            )
+            self.rotulo_tempo.config(text="⏸ Partida em espera", fg=COR_TEMPO)
+            self._adicionar_historico(f"⏸ {apelido_adv} desconectou. Partida em espera.")
+            self._iniciar_espera(apelido_adv, int(msg.get("tempo_espera", 30)))
+            return
+
+        # Ele voltou: a próxima PERGUNTA (reenviada pelo servidor) retoma o jogo.
+        if motivo == "reconectado":
+            self._parar_espera()
+            self._set_status(f"✅ {apelido_adv} voltou! Retomando a partida…")
+            self._adicionar_historico(f"✅ {apelido_adv} voltou para a partida.")
+            return
+
+        # Ele não voltou a tempo (motivo "tempo_esgotado") ou caso antigo sem motivo.
+        self._parar_espera()
+        self._parar_contagem()
+        self._desativar_opcoes()
+        self.rotulo_tempo.config(text="")
+        self.rotulo_rodada.config(text="Partida encerrada")
+        self._set_status(f"⚠ {apelido_adv} não voltou. A partida foi encerrada.")
+        self.botao_conectar.config(
+            state="normal", text="Jogar novamente",
+            bg=COR_BTN_CONN, command=self._jogar_novamente,
+        )
+        messagebox.showwarning(
+            "Adversário desconectado",
+            f"{apelido_adv} não voltou a tempo e a partida foi encerrada. "
+            "Você pode iniciar uma nova.",
+        )
+
+    # [Origem: IA]
+    def _iniciar_espera(self, apelido: str, segundos: int):
+        """Mostra a contagem regressiva enquanto o adversário pode voltar."""
+        self._parar_espera()
+        self._espera_apelido = apelido
+        self._espera_restante = max(0, segundos)
+        self._tick_espera()
+
+    # [Origem: IA]
+    def _tick_espera(self):
+        self._set_status(
+            f"⏳ {self._espera_apelido} desconectou. Aguardando a volta: "
+            f"{self._espera_restante}s"
+        )
+        if self._espera_restante > 0:
+            self._espera_restante -= 1
+            self._timer_espera = self.janela.after(1000, self._tick_espera)
+
+    # [Origem: IA]
+    def _parar_espera(self):
+        timer = getattr(self, "_timer_espera", None)
+        self._timer_espera = None
+        if timer is not None:
+            try:
+                self.janela.after_cancel(timer)
+            except (tk.TclError, ValueError):
+                pass
 
     # ── Envio de resposta ─────────────────────────────────────────────────
 
